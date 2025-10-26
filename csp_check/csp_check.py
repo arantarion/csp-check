@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import textwrap
 import urllib.parse
 from dataclasses import dataclass, field
+from string import Template
 from typing import Dict, List, Optional
 
 import requests
@@ -103,7 +105,7 @@ class SourceItem:
     raw: str
     normalized: str
     note: Optional[str] = None
-    color: str = "white" 
+    color: str = "white"
 
 
 @dataclass
@@ -130,8 +132,17 @@ class URLResult:
 # ---------------------------------------
 
 
-def normalize_url_maybe(url: str) -> str:
+def normalize_url(url: str) -> str:
     return url if url.startswith(("http://", "https://")) else "https://" + url
+
+
+def normalize_lang(lang: Optional[str]) -> str:
+    if not lang:
+        return "en"
+    lang = lang.strip().lower()
+    if lang in {"de", "german", "deutsch"}:
+        return "de"
+    return "en"
 
 
 def parse_cookies(cookie_str: Optional[str]) -> Dict[str, str]:
@@ -158,6 +169,29 @@ def is_wildcard_token(token: str) -> bool:
     return "*" in host
 
 
+def is_host(token: str) -> bool:
+    """Return True for tokens that look like host/scheme sources."""
+    t = token.strip().replace("'", "")
+    if not t:
+        return False
+    if t in {"'self'", "'none'", "'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'", "'report-sample'"}:
+        return False
+    if t.endswith(":"):
+        return t.lower() in {"http:", "https:"}
+    if t.startswith(("data:", "blob:", "filesystem:", "mediastream:", "ws:", "wss:")):
+        return False
+    if t == "*" or t.startswith(("http://", "//")):
+        return True
+    # Bare host / wildcard host / IP (optionally with port/path)
+    if t.lower() == "localhost":
+        return True
+    if re.match(r"^\[?[0-9a-fA-F:.]+\]?(:\d+)?(/.*)?$", t):  # IPv4/IPv6 with optional port/path
+        return True
+    if re.match(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d+)?(/.*)?$", t):  # domain with optional port/path
+        return True
+    return False
+
+
 def pretty_csp(csp_raw: str) -> str:
     parts = [p.strip() for p in csp_raw.split(";") if p.strip()]
     if not parts:
@@ -172,7 +206,6 @@ def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
     Wildcard domains (e.g. *.example.com) are wrapped as a whole.
     """
     problem_items = set()
-
     if res.warnings.get("unsafe_inline"):
         problem_items.add("'unsafe-inline'")
     if res.warnings.get("unsafe_eval"):
@@ -182,6 +215,8 @@ def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
     if res.warnings.get("missing_https_and_upgrade"):
         for token in csp_pretty.replace(";", " ").split():
             if token.startswith("http://"):
+                problem_items.add(token)
+            if is_host(token):
                 problem_items.add(token)
 
     if res.warnings.get("wildcard_sources"):
@@ -196,31 +231,70 @@ def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
     return highlighted
 
 
-def normalize_lang(lang: Optional[str]) -> str:
-    if not lang:
-        return "en"
-    lang = lang.strip().lower()
-    if lang in {"de", "german", "deutsch"}:
-        return "de"
-    return "en"
-
-
-def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
+def parse_csp(
+    url: str, cookies: Dict[str, str], proxies: Dict = {}, is_secure: bool = True, redirect: bool = False
+) -> URLResult:
     requested_url = url
-    url = normalize_url_maybe(url)
+    url = normalize_url(url)
 
     try:
         resp = requests.get(
             url,
             cookies=cookies,
-            allow_redirects=False,
+            allow_redirects=redirect,
             headers={"User-Agent": USER_AGENT},
+            proxies=proxies,
+            verify=is_secure,
             timeout=15,
         )
     except Exception as e:
         return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
 
     csp_header = resp.headers.get("Content-Security-Policy")
+    if not csp_header:
+        csp_header = resp.headers.get("X-Content-Security-Policy")
+
+    if not csp_header:
+        from html.parser import HTMLParser
+
+        class _MetaCSPParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.csp = None
+                self._in_head = False
+
+            def handle_starttag(self, tag, attrs):
+                tag_l = tag.lower()
+                if tag_l == "head":
+                    self._in_head = True
+
+                if not self._in_head:
+                    return
+
+                if tag_l == "meta":
+                    attrs_dict = {k.lower(): v for k, v in attrs}
+                    http_equiv = (attrs_dict.get("http-equiv") or "").lower()
+                    if http_equiv in ("content-security-policy", "x-content-security-policy"):
+                        content = attrs_dict.get("content")
+                        if content and self.csp is None:
+                            self.csp = content.strip()
+
+                if tag_l == "body":
+                    self._in_head = False
+
+            def handle_endtag(self, tag):
+                if tag.lower() == "head":
+                    self._in_head = False
+
+        parser = _MetaCSPParser()
+        try:
+            parser.feed(resp.text or "")
+        except Exception:
+            pass
+
+        if parser.csp:
+            csp_header = parser.csp
+
     if not csp_header:
         return URLResult(
             url=url, requested_url=requested_url, csp_raw=None, error="Content-Security-Policy header not found"
@@ -237,6 +311,7 @@ def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
     has_data_or_blob = False
     has_report_to = False
     has_upgrade_insecure = False
+    saw_host_source = False
     has_explicit_https_source = False
 
     for part in parts:
@@ -261,10 +336,15 @@ def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
 
         for item in values:
             norm = item
+            lower_item = item.lower()
+
             if item.startswith("'nonce-"):
                 norm = "'nonce-'"
             elif item.startswith("'sha256-"):
                 norm = "'sha256-'"
+
+            if is_host(item):
+                saw_host_source = True
 
             note = T_HELP.get(norm, {}).get("text")
 
@@ -276,7 +356,7 @@ def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
                 has_wildcard = True
             if norm in {"data:", "blob:"}:
                 has_data_or_blob = True
-            if item.startswith("https://") or norm == "https:":
+            if norm == "https:" or lower_item.startswith("https://"):
                 has_explicit_https_source = True
 
             # Coloring rules
@@ -303,7 +383,9 @@ def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
         "wildcard_sources": has_wildcard,
         "data_or_blob": has_data_or_blob,
         "missing_report_to": not has_report_to,
-        "missing_https_and_upgrade": (not has_explicit_https_source) and (not has_upgrade_insecure),
+        "missing_https_and_upgrade": (
+            saw_host_source and (not has_explicit_https_source) and (not has_upgrade_insecure)
+        ),
     }
 
     return URLResult(
@@ -312,7 +394,7 @@ def parse_csp(url: str, cookies: Dict[str, str]) -> URLResult:
         csp_raw=csp_header,
         policies=policies,
         deprecated_used=sorted(set(deprecated_used)),
-        warnings=warnings_dict, 
+        warnings=warnings_dict,
         error=None,
     )
 
@@ -334,16 +416,16 @@ class TextRenderer(BaseRenderer):
     def print_to_console(self, results: List[URLResult]) -> None:
         for res in results:
             header = Text.from_markup(f"[bold]{res.requested_url}[/bold] — Fetched: [cyan]{res.url}[/cyan]")
-            self.console.print(Panel(header, expand=False, box=box.ROUNDED))
+            self.console.print(Panel(header, expand=False, box=box.ROUNDED))  # type: ignore
 
             if res.error:
-                self.console.print(f"[red]Error:[/red] {res.error}")
-                self.console.print()
+                self.console.print(f"[red]Error:[/red] {res.error}")  # type: ignore
+                self.console.print()  # type: ignore
                 continue
 
             warn_lines = []
             if res.warnings.get("deprecated_directives"):
-                warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))
+                warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))  # type: ignore
             if res.warnings.get("unsafe_inline"):
                 warn_lines.append("Uses [red]'unsafe-inline'[/red].")
             if res.warnings.get("unsafe_eval"):
@@ -360,7 +442,7 @@ class TextRenderer(BaseRenderer):
                 )
 
             if warn_lines:
-                self.console.print(
+                self.console.print(  # type: ignore
                     Panel(
                         "\n".join(warn_lines),
                         title="Warnings",
@@ -398,8 +480,8 @@ class TextRenderer(BaseRenderer):
                     table.add_row(directive_label if first else "", value)
                     first = False
 
-            self.console.print(table)
-            self.console.print()
+            self.console.print(table)  # type: ignore
+            self.console.print()  # type: ignore
 
     def render_many(self, results: List[URLResult]) -> str:
         lines: List[str] = []
@@ -502,25 +584,26 @@ class LatexRenderer(BaseRenderer):
         order = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
         return [p for p in order if p in problems]
 
-    def _block_no_csp(self) -> str:
+    def _block_no_csp(self, plural: bool = False) -> str:
         if self.lang == "de":
-            return r"""
+            de_template = Template(
+                r"""
 \section{Content Security Policy}
 \finding[status=Open]
 {L}
 {Content Security Policy}
-{Die Webanwendung wird nicht durch eine Content Security Policy geschützt, die bspw. Cross-Site Scripting-Angriffe verhindern kann}
+{$FINDING_SUMMARY}
 {Restriktive Content Security Policy konfigurieren}
 
-Für die Webanwendung wird keine Content Security Policy (CSP) gesetzt, die einen zusätzlichen Schutz gegen Cross-Site Scripting (XSS)-Angriffe bieten würde.
+Für $APP_FUER, die einen zusätzlichen Schutz gegen Cross-Site Scripting (XSS)-Angriffe bieten $KONJUNKTIV1.
 
 Eine CSP ist ein zusätzliches Sicherheitsfeature, welches der Server über den \texttt{Content-Security-Policy}-HTTP-Header setzen kann, um dem Browser mitzuteilen, von welchen Quellen bestimmte Ressourcen geladen werden dürfen.
 Abhängig vom Typ der Ressource, wie Skripte, Stylesheets, Grafiken etc. können verschiedene Einschränkungen konfiguriert werden, etwa von welchen Servern Dateien nachgeladen werden dürfen und ob Inline-Code erlaubt ist.
 Wenn die CSP restriktiv konfiguriert ist, dient sie als zusätzlicher Schutz und hilft dabei, bestimmte Angriffe, insbesondere XSS, zu verhindern, da der Browser den injizierten Schadcode nicht laden und ausführen dürfte.
 
-Derzeit wird jedoch keine CSP vom Server gesetzt.
+$CURRENT_STATE
 
-Es sollte geprüft werden, ob eine restriktive CSP für die Webanwendung konfiguriert werden kann.
+Es sollte geprüft werden, ob eine restriktive CSP für $WEBAPP konfiguriert werden kann.
 Dabei muss bedacht werden, dass dies Änderungen am Applikationscode erfordern kann, beispielsweise weil Inline-JavaScript-Code in dedizierte Dateien verschoben werden muss.
 Bei Produkten eines anderen Herstellers sind solche Änderungen in der Regel nur von diesem sinnvoll durchführbar.
 
@@ -530,24 +613,53 @@ Eine CSP kann auch in einem \enquote{report-only}-Modus genutzt werden, bei dem 
 Weitere Informationen können dem CSP-Artikel in den MDN Web Docs entnommen werden.\footnote{Content Security Policy: \url{https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP}}
 Während der Entwicklung ist auch das Online-Werkzeug \enquote{CSP Evaluator}\footnote{CSP Evaluator: \url{https://csp-evaluator.withgoogle.com/}} hilfreich, mit dem sich die Probleme einer gegebenen CSP identifizieren lassen.
 """.strip()
+            )
+
+            app_nom = "Die Webanwendung" if not plural else "Die Webanwendungen"
+            finding_summary = (
+                f"{app_nom} {'wird' if not plural else 'werden'} nicht durch {'eine Content Security Policy' if not plural else 'Content Security Policies'} geschützt, "
+                f"die bspw. Cross-Site Scripting-Angriffe verhindern {'kann' if not plural else 'können'}"
+            )
+            app_fuer = (
+                "die Webanwendung wird keine Content Security Policy (CSP) gesetzt"
+                if not plural
+                else "die untersuchten Webanwendungen werden keine Content Security Policies (CSP) gesetzt"
+            )
+            konjunktiv1 = "würde" if not plural else "würden"
+            current_state = (
+                "Derzeit wird jedoch keine CSP vom Server gesetzt."
+                if not plural
+                else "Derzeit setzt jedoch keiner der untersuchten Webserver eine CSP."
+            )
+            webapp = "die Webanwendung" if not plural else "die Webanwendungen"
+
+            return de_template.substitute(
+                FINDING_SUMMARY=finding_summary,
+                APP_FUER=app_fuer,
+                KONJUNKTIV1=konjunktiv1,
+                CURRENT_STATE=current_state,
+                WEBAPP=webapp,
+            )
+
         else:
-            return r"""
+            en_template = Template(
+                r"""
 \section{Content Security Policy}
 \finding[status=Open]
 {L}
 {Content Security Policy}
-{The web application is not protected by a content security policy that can, for example, prevent cross-site scripting attacks}
+{$FINDING_SUMMARY}
 {Configure restrictive content security policy}
 
-No Content Security Policy (CSP) is set for the web application, which would provide additional protection against cross-site scripting (XSS) attacks.
+No Content Security Policy (CSP) is set for $APP_FOR, which would provide additional protection against cross-site scripting (XSS) attacks.
 
 A CSP is an additional security feature that the server can set via the \texttt{Content-Security-Policy} HTTP header to tell the browser from which sources certain resources may be loaded.
 Depending on the type of resource, such as scripts, stylesheets, graphics, etc., various restrictions can be configured, such as from which servers files may be loaded and whether inline code is permitted.
 If the CSP is configured restrictively, it serves as additional protection and helps to prevent certain attacks, especially XSS, as the browser is not allowed to load and execute the injected malicious code.
 
-However, no CSP is currently set by the server.
+$CURRENT_STATE
 
-It should be checked whether a restrictive CSP can be configured for the web application.
+It should be checked whether $SIN_PLU_CSP can be configured for $APP_FOR.
 It must be borne in mind that this may require changes to the application code, for example because inline JavaScript code must be moved to dedicated files.
 In the case of products from another manufacturer, such changes can usually only be made by that manufacturer.
 
@@ -557,6 +669,27 @@ A CSP can also be used in a \enquote{report-only} mode, in which violations are 
 Further information can be found in the CSP article in the MDN Web Docs.\footnote{Content Security Policy: \url{https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP}}
 During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluator: \url{https://csp-evaluator.withgoogle.com/}}, which can be used to identify the problems of a given CSP, is also helpful.
 """.strip()
+            )
+
+            app_nom = "The web application" if not plural else "The web applications"
+            finding_summary = (
+                f"{app_nom} {'is' if not plural else 'are'} not protected by a content security policy that can, "
+                f"for example, prevent cross-site scripting attacks"
+            )
+            app_for = "the web application" if not plural else "the web applications"
+            current_state = (
+                "However, no CSP is currently set by the server."
+                if not plural
+                else "However, no CSPs are set by the examined servers."
+            )
+            sin_plu_csp = "a restrictive CSP" if not plural else "restrictive CSPs"
+
+            return en_template.substitute(
+                FINDING_SUMMARY=finding_summary,
+                APP_FOR=app_for,
+                CURRENT_STATE=current_state,
+                SIN_PLU_CSP=sin_plu_csp,
+            )
 
     def render_many(self, results: List[URLResult]) -> str:
         provide_flash = r"\providecommand{\flash}{\syred{\faFlash}}"
@@ -565,7 +698,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         if len(results) == 1:
             res = results[0]
             if res.error or not res.csp_raw:
-                return "\n".join([provide_flash, self._block_no_csp()])
+                return self._block_no_csp()
 
             formatted = pretty_csp(res.csp_raw)
             formatted = highlight_csp_problems(formatted, res)
@@ -592,7 +725,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         # If all targets have no CSP
         if all_no_csp:
-            return "\n".join([provide_flash, self._block_no_csp()])
+            return self._block_no_csp(plural=True)
 
         # At least one CSP exists:
         cumulative: List[str] = []
@@ -607,29 +740,35 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         template_block = rf"""
 \begin{{sydeflisting}}{{csplisting}}
-% intentionally left empty
+§R[TODO: Diesen Teil im Bausteintext per lokalem Baustein entfernen!]R§
 \end{{sydeflisting}}
 \baustein[%
     findingattribute={{%
         %prefix={{}},
     }},
     einstufung=I,
-    % csplisting=csplisting,
+    csplisting=csplisting,
     probleme={problems_braced}, % Options: missing-directive,unsafe,no-https,all-origins,data,no-report
 ]
 {{csp}}
 """.strip()
 
-        headers = cumulative[:]  # copy
+        headers = cumulative[:]
         headers.append("no csp set")
+        header_titles = ["URL"] + headers
         num_problem_cols = len(headers)
-        col_spec = "l" + ("c" * num_problem_cols)
+        col_spec = "l" + ("-c" * num_problem_cols)
 
         lines: List[str] = []
-        lines.append(r"\begin{tabular}{" + col_spec + "}")
-
-        header_titles = ["URL"] + headers
-        lines.append(" \\ & ".join(header_titles) + r" \\ \hline")
+        lines.append(
+            f"{r'\vref{tab:csp_config} gibt eine Übersicht über Fehlkonfigurationen der CSPs.' if self.lang == 'de' else r'\vref{tab:csp_config} provides an overview of CSP misconfigurations.'}"
+        )
+        lines.append("")
+        lines.append(
+            rf"\begin{{sytable}}[{'CSP Fehlkonfigurationen' if self.lang == 'de' else 'CSP misconfigurations'}\label{{tab:csp_config}}]{{"
+            + col_spec
+            + f"}}{{{' & '.join(header_titles)}}}"
+        )
 
         for r in results:
             url_label = r.requested_url
@@ -645,8 +784,8 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
                     row_cells.append(r"\flash" if p in plist else "")
                 row_cells.append("")
 
-            lines.append(" \\ & ".join(row_cells) + r" \\")
-        lines.append(r"\end{tabular}")
+            lines.append(" & ".join(row_cells) + r" \\")
+        lines.append(r"\end{sytable}")
 
         table_block = "\n".join(lines)
 
@@ -696,6 +835,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Language for LaTeX output (de|en|german|english). Default: de.",
         default="de",
     )
+    p.add_argument(
+        "--proxy",
+        help="Comma-separated list of proxy URLs to use, e.g. 'http://127.0.0.1:8080,https://proxy2:443'.",
+        default=None,
+    )
+    p.add_argument(
+        "--insecure",
+        action="store_false",
+        help="Disable SSL certificate verification.",
+    )
+    p.add_argument(
+        "-r",
+        "--redirect",
+        action="store_true",
+        help="Allows redirects",
+    )
 
     return p
 
@@ -724,7 +879,10 @@ def main() -> int:
             console.print(f"[red]Failed to read file:[/red] {e}")
             return 2
 
-    results: List[URLResult] = [parse_csp(u, cookies) for u in urls]
+    results: List[URLResult] = [
+        parse_csp(url=u, cookies=cookies, proxies=args.proxy, is_secure=args.insecure, redirect=args.redirect)
+        for u in urls
+    ]
 
     # File output
     if args.output:
@@ -750,7 +908,7 @@ def main() -> int:
             print(content)
         elif args.format == "raw":
             for res in results:
-                content = pretty_csp(res.csp_raw) if res else ""
+                content = pretty_csp(res.csp_raw) if res else ""  # type: ignore
                 print(content)
         elif args.format == "json":
             renderer: BaseRenderer = JsonRenderer()

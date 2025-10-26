@@ -1,9 +1,9 @@
 [project]
 name = "csp-check"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Content-Security-Policy inspector with rich output, file export, and directive analysis."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = { text = "syss-internal" }
 authors = [
   { name = "Henry Weckermann", email = "henry.weckermann@syss.de" }

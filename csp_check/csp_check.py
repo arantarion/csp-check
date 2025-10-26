@@ -849,7 +849,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "-r",
         "--redirect",
         action="store_true",
-        help="Allows redirects",
+        help="Allows redirects.",
     )
 
     return p

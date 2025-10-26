@@ -15,10 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-csp-check = "csp_check:main"
-
-testpaths = ["test"]
-python_files = ["test*.py"]
+csp-check = "csp_check.csp_check:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

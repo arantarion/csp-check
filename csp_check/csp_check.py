@@ -11,16 +11,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import sys
 import textwrap
 import urllib.parse
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from string import Template
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
-import requests
+import httpx
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -145,6 +147,41 @@ def normalize_lang(lang: Optional[str]) -> str:
     return "en"
 
 
+def normalize_proxy_list(proxies: str) -> dict:
+    proxy_dict = {}
+    for p in proxies.split(","):
+        p = p.strip()
+        if not p:
+            continue
+
+        if "://" not in p:
+            p = "http://" + p
+
+        try:
+            scheme = p.split("://", 1)[0].lower()
+        except Exception:
+            scheme = "http"
+
+        proxy_dict[scheme] = p
+        if scheme == "http" and "https" not in proxy_dict:
+            proxy_dict["https"] = p
+        elif scheme == "https" and "http" not in proxy_dict:
+            proxy_dict["http"] = p
+
+    return proxy_dict
+
+
+def read_urls_from_file(path: str) -> List[str]:
+    urls: List[str] = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            urls.append(s)
+    return urls
+
+
 def parse_cookies(cookie_str: Optional[str]) -> Dict[str, str]:
     if not cookie_str:
         return {}
@@ -192,6 +229,44 @@ def is_host(token: str) -> bool:
     return False
 
 
+def extract_csp_from_html_head(html: str) -> Optional[str]:
+    class _MetaCSPParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.csp = None
+            self._in_head = False
+
+        def handle_starttag(self, tag, attrs):
+            tag_l = tag.lower()
+            if tag_l == "head":
+                self._in_head = True
+
+            if not self._in_head:
+                return
+
+            if tag_l == "meta":
+                attrs_dict = {k.lower(): v for k, v in attrs}
+                http_equiv = (attrs_dict.get("http-equiv") or "").lower()
+                if http_equiv in ("content-security-policy", "x-content-security-policy"):
+                    content = attrs_dict.get("content")
+                    if content and self.csp is None:
+                        self.csp = content.strip()
+
+            if tag_l == "body":
+                self._in_head = False
+
+        def handle_endtag(self, tag):
+            if tag.lower() == "head":
+                self._in_head = False
+
+    parser = _MetaCSPParser()
+    try:
+        parser.feed(html or "")
+    except Exception:
+        pass
+    return parser.csp
+
+
 def pretty_csp(csp_raw: str) -> str:
     parts = [p.strip() for p in csp_raw.split(";") if p.strip()]
     if not parts:
@@ -232,69 +307,10 @@ def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
 
 
 def parse_csp(
-    url: str, cookies: Dict[str, str], proxies: Dict = {}, is_secure: bool = True, redirect: bool = False
+    csp_header: Optional[str],
+    url: str,
+    requested_url: str,
 ) -> URLResult:
-    requested_url = url
-    url = normalize_url(url)
-
-    try:
-        resp = requests.get(
-            url,
-            cookies=cookies,
-            allow_redirects=redirect,
-            headers={"User-Agent": USER_AGENT},
-            proxies=proxies,
-            verify=is_secure,
-            timeout=15,
-        )
-    except Exception as e:
-        return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
-
-    csp_header = resp.headers.get("Content-Security-Policy")
-    if not csp_header:
-        csp_header = resp.headers.get("X-Content-Security-Policy")
-
-    if not csp_header:
-        from html.parser import HTMLParser
-
-        class _MetaCSPParser(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.csp = None
-                self._in_head = False
-
-            def handle_starttag(self, tag, attrs):
-                tag_l = tag.lower()
-                if tag_l == "head":
-                    self._in_head = True
-
-                if not self._in_head:
-                    return
-
-                if tag_l == "meta":
-                    attrs_dict = {k.lower(): v for k, v in attrs}
-                    http_equiv = (attrs_dict.get("http-equiv") or "").lower()
-                    if http_equiv in ("content-security-policy", "x-content-security-policy"):
-                        content = attrs_dict.get("content")
-                        if content and self.csp is None:
-                            self.csp = content.strip()
-
-                if tag_l == "body":
-                    self._in_head = False
-
-            def handle_endtag(self, tag):
-                if tag.lower() == "head":
-                    self._in_head = False
-
-        parser = _MetaCSPParser()
-        try:
-            parser.feed(resp.text or "")
-        except Exception:
-            pass
-
-        if parser.csp:
-            csp_header = parser.csp
-
     if not csp_header:
         return URLResult(
             url=url, requested_url=requested_url, csp_raw=None, error="Content-Security-Policy header not found"
@@ -397,6 +413,105 @@ def parse_csp(
         warnings=warnings_dict,
         error=None,
     )
+
+
+async def fetch_csp(
+    url: str,
+    *,
+    cookies: Dict[str, str],
+    proxies: Dict = {},
+    is_secure: bool = True,
+    redirect: bool = False,
+    client: Optional[httpx.AsyncClient] = None,
+    timeout_s: float = 15.0,
+    max_retries: int = 2,
+    backoff_base: float = 0.5,
+) -> URLResult:
+    requested_url = url
+    url = normalize_url(url)
+
+    owns_client = client is None
+    if owns_client:
+        # httpx proxies accept a dict like {"http": "http://proxy:port", "https": "http://proxy:port"}
+        # You can pass through your existing 'proxies' dict directly if already in that shape.
+        client = httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT},
+            cookies=cookies or {},
+            proxies=proxies or None,
+            verify=is_secure,
+            follow_redirects=redirect,
+            timeout=httpx.Timeout(timeout_s),
+        )
+
+    try:
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = await client.get(url)
+                break
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_exc = e
+                if attempt >= max_retries:
+                    return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
+                await asyncio.sleep(backoff_base * (2**attempt))
+        else:
+            return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {last_exc}")
+
+        # Try headers first
+        csp_header = resp.headers.get("Content-Security-Policy")
+        if not csp_header:
+            csp_header = resp.headers.get("X-Content-Security-Policy")
+
+        # If not present, scan <meta http-equiv="Content-Security-Policy" ...>
+        if not csp_header:
+            csp_from_meta = extract_csp_from_html_head(resp.text)
+            if csp_from_meta:
+                csp_header = csp_from_meta
+
+        return parse_csp(csp_header, url, requested_url)
+
+    except Exception as e:
+        return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+async def fetch_multiple_csps(
+    urls: Sequence[str],
+    *,
+    cookies: Dict[str, str],
+    proxies: Dict = {},
+    is_secure: bool = True,
+    redirect: bool = False,
+    concurrency: int = 20,
+    timeout_s: float = 15.0,
+    max_retries: int = 2,
+) -> List[URLResult]:
+    sem = asyncio.Semaphore(concurrency)
+    async with httpx.AsyncClient(
+        headers={"User-Agent": USER_AGENT},
+        cookies=cookies or {},
+        proxies=proxies or None,
+        verify=is_secure,
+        follow_redirects=redirect,
+        timeout=httpx.Timeout(timeout_s),
+    ) as client:
+
+        async def _task(u: str) -> URLResult:
+            async with sem:
+                return await fetch_csp(
+                    u,
+                    cookies=cookies,
+                    proxies=proxies,
+                    is_secure=is_secure,
+                    redirect=redirect,
+                    client=client,
+                    timeout_s=timeout_s,
+                    max_retries=max_retries,
+                )
+
+        return await asyncio.gather(*(_task(u) for u in urls))
 
 
 # ---------------------------------------
@@ -851,19 +966,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allows redirects.",
     )
+    p.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=20,
+        help="Max number of concurrent requests when fetching multiple URLs (default: 20)",
+    )
+    p.add_argument(
+        "--retries",
+        type=int,
+        default=2,
+        help="Number of retry attempts for transient network errors (default: 2)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="Per-request timeout in seconds (default: 15)",
+    )
 
     return p
-
-
-def read_urls_from_file(path: str) -> List[str]:
-    urls: List[str] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            urls.append(s)
-    return urls
 
 
 def main() -> int:
@@ -879,10 +1002,26 @@ def main() -> int:
             console.print(f"[red]Failed to read file:[/red] {e}")
             return 2
 
-    results: List[URLResult] = [
-        parse_csp(url=u, cookies=cookies, proxies=args.proxy, is_secure=args.insecure, redirect=args.redirect)
-        for u in urls
-    ]
+    if (args.format == "text" or args.format is None) and len(urls) > 1:
+        print_choice = input(f"Do you really want to print {len(urls)} results in you terminal? (Y/n): ")
+        if not (print_choice.lower() == "y" or print_choice == ""):
+            print("Try one of the other output methods with -o [raw, json, latex]")
+            exit(1)
+
+    proxies = normalize_proxy_list(args.proxy)
+
+    results: List[URLResult] = asyncio.run(
+        fetch_multiple_csps(
+            urls,
+            cookies=cookies,
+            proxies=proxies,
+            is_secure=args.insecure,
+            redirect=args.redirect,
+            concurrency=args.threads,
+            timeout_s=args.timeout,
+            max_retries=args.retries,
+        )
+    )
 
     # File output
     if args.output:

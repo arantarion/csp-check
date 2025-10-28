@@ -1008,7 +1008,10 @@ def main() -> int:
             print("Try one of the other output methods with -o [raw, json, latex]")
             exit(1)
 
-    proxies = normalize_proxy_list(args.proxy)
+    if args.proxy:
+        proxies = normalize_proxy_list(args.proxy)
+    else:
+        proxies = {}
 
     results: List[URLResult] = asyncio.run(
         fetch_multiple_csps(

@@ -5,6 +5,7 @@
 #     "requests",
 #     "rich",
 #     "tldextract",
+#     "httpx",
 # ]
 # ///
 
@@ -20,7 +21,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from string import Template
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Callable
 
 import httpx
 from rich import box
@@ -28,6 +29,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.rule import Rule
+from rich.markdown import Markdown
+from rich.prompt import Prompt, Confirm
 
 # ---------------------------------------
 # Knowledge base
@@ -91,6 +95,20 @@ DEPRECATED_OR_LEGACY = {
     "disown-opener",
     "block-all-mixed-content",
     "reflected-xss",
+}
+
+BYPASS_DOMAINS = {
+    "*.hotjar.com":        {"risks": ["exfil"]},
+    "ask.hotjar.io":       {"risks": ["exfil"]},
+    "*.facebook.com":      {"risks": ["exfil"]},
+    "*.jsdeliver.com":     {"risks": ["exec"]},
+    "cdn.jsdelivr.ne":     {"risks": ["exec"]},
+    "*.cloudfront.net":    {"risks": ["exfil", "exec"]},
+    "*.amazonaws.com":     {"risks": ["exfil", "exec"]},
+    "*.azurewebsites.net": {"risks": ["exfil", "exec"]},
+    "*.azurestaticapps.net":{"risks": ["exfil", "exec"]},
+    "*.herokuapp.com":     {"risks": ["exfil", "exec"]},
+    "*.firebaseapp.com":   {"risks": ["exfil", "exec"]},
 }
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
@@ -204,6 +222,15 @@ def is_wildcard_token(token: str) -> bool:
     else:
         host = token
     return "*" in host
+
+
+def domain_matches_bypass_domain(pattern: str, host: str) -> bool:
+    """Match host against a pattern with optional leading '*.' wildcard."""
+    if not host:
+        return False
+    host = host.replace("https://", "").replace("http://", "").replace("wss://", "").replace("ws://", "")
+    pattern = pattern.lower().strip()
+    return host == pattern
 
 
 def is_host(token: str) -> bool:
@@ -320,6 +347,7 @@ def parse_csp(
 
     policies: List[Policy] = []
     deprecated_used: List[str] = []
+    bypass_possibilities: List = []
 
     has_unsafe_inline = False
     has_unsafe_eval = False
@@ -329,6 +357,8 @@ def parse_csp(
     has_upgrade_insecure = False
     saw_host_source = False
     has_explicit_https_source = False
+    has_bypass = False
+
 
     for part in parts:
         if not part:
@@ -375,6 +405,20 @@ def parse_csp(
             if norm == "https:" or lower_item.startswith("https://"):
                 has_explicit_https_source = True
 
+
+            for patt, meta in BYPASS_DOMAINS.items():
+                    if domain_matches_bypass_domain(patt, norm):
+                        has_bypass = True
+                        bypass_possibilities.append({
+                            "directive": name,
+                            "source_raw": item,
+                            "matched_host": norm,
+                            "pattern": patt,
+                            "risks": meta["risks"],
+                        })
+                        #risk_label = ",".join(meta["risks"])
+                        #note = (note + " | " if note else "") + f"suspicious: {patt} ({risk_label})"
+
             # Coloring rules
             if is_wildcard_token(item) or norm in {"*", "data:", "blob:", "'unsafe-inline'", "'unsafe-eval'"}:
                 if is_wildcard_token(item) or norm == "*":
@@ -403,6 +447,8 @@ def parse_csp(
             saw_host_source and (not has_explicit_https_source) and (not has_upgrade_insecure)
         ),
     }
+
+    print(bypass_possibilities)
 
     return URLResult(
         url=url,
@@ -437,7 +483,7 @@ async def fetch_csp(
         client = httpx.AsyncClient(
             headers={"User-Agent": USER_AGENT},
             cookies=cookies or {},
-            proxies=proxies or None,
+            # proxies=proxies or None,
             verify=is_secure,
             follow_redirects=redirect,
             timeout=httpx.Timeout(timeout_s),
@@ -492,7 +538,7 @@ async def fetch_multiple_csps(
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT},
         cookies=cookies or {},
-        proxies=proxies or None,
+        #proxies=proxies or None,
         verify=is_secure,
         follow_redirects=redirect,
         timeout=httpx.Timeout(timeout_s),
@@ -911,6 +957,51 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 # CLI
 # ---------------------------------------
 
+def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
+    """
+    Show a Rich-styled prompt that lets the user paste a CSP.
+
+    Returns:
+        str with the pasted CSP (stripped) on success,
+        None if the user provided nothing or aborted with KeyboardInterrupt.
+    """
+    console = Console()
+    console.print(
+        Panel.fit(
+            Text.from_markup(
+                "[b]Interactive CSP Input[/]\n"
+                "Paste your Content-Security-Policy below.\n\n"
+                f"• End input with a line containing only [b]{sentinel}[/]\n"
+                "• Or send end-of-file: Ctrl-D (macOS/Linux) or Ctrl-Z then Enter (Windows)\n\n"
+                "Example:\n"
+                "  default-src 'self'; script-src 'self' https://cdn.example.com;\n"
+                f"  [i]{sentinel}[/]\n"
+            ),
+            title="CSP Parser",
+            border_style="cyan",
+        )
+    )
+
+    lines: list[str] = []
+    try:
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if line.strip() == sentinel:
+                break
+            lines.append(line)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Aborted by user.[/]")
+        return None
+
+    csp = "\n".join(lines).strip()
+    if not csp:
+        console.print("[red]No CSP provided.[/]")
+        return None
+    return csp
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -930,6 +1021,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("-u", "--url", help="Single URL/domain to check.")
     src.add_argument("-f", "--file", help="Path to a file with one URL per line.")
+    src.add_argument(
+        "--csp",
+        action="store_true",
+        help="Open an interactive input to paste a CSP and parse it."
+    )
+
 
     p.add_argument("-c", "--cookies", help="Semicolon-separated cookies: 'a=b; c=d'", default=None)
     p.add_argument(
@@ -992,6 +1089,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_arg_parser().parse_args()
     cookies = parse_cookies(args.cookies)
+
+    if args.csp:
+        csp_text = read_csp_with_rich()
+        if csp_text is None:
+            return -1
+        return 0
 
     if args.url:
         urls = [args.url]

@@ -45,9 +45,13 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "manifest-src": {"text": "Valid sources for web app manifests.", "color": "white"},
     "media-src": {"text": "Valid sources for audio/video/track.", "color": "white"},
     "object-src": {"text": "Valid sources for <object>/<embed>.", "color": "white"},
-    # "prefetch-src": {"text": "Valid sources to prefetch/prerender.", "color": "white"},
-    "script-src": {"text": "Valid sources for JavaScript.", "color": "white"},
-    "style-src": {"text": "Valid sources for stylesheets.", "color": "white"},
+    "prefetch-src": {"text": "Valid sources to prefetch/prerender. (Deprecated)", "color": "yellow"},
+    "script-src": {"text": "Valid sources for JavaScript and WebAssembly; fallback for script-src-elem and script-src-attr.", "color": "white"},
+    "script-src-elem": {"text": "Valid sources for <script> elements only (not inline handlers).", "color": "white"},
+    "script-src-attr": {"text": "Valid sources for inline JavaScript event handlers (e.g. onclick).", "color": "white"},
+    "style-src": {"text": "Valid sources for stylesheets; fallback for style-src-elem and style-src-attr.", "color": "white"},
+    "style-src-elem": {"text": "Valid sources for <style> elements and <link rel=\"stylesheet\">.", "color": "white"},
+    "style-src-attr": {"text": "Valid sources for inline style attributes.", "color": "white"},
     "webrtc-src": {"text": "Valid sources for WebRTC.", "color": "white"},
     "worker-src": {"text": "Valid sources for Worker/SharedWorker/ServiceWorker.", "color": "white"},
     # Document directives
@@ -60,26 +64,51 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "frame-ancestors": {"text": "Valid parents that may embed the page.", "color": "white"},
     "navigate-to": {"text": "Restricts where a document can navigate.", "color": "white"},
     # Reporting
-    # "report-uri": {"text": "Legacy violation report endpoint (prefer report-to).", "color": "yellow"},
+    "report-uri": {"text": "Legacy violation report endpoint (prefer report-to).", "color": "yellow"},
     "report-to": {"text": "Reporting API group for CSP violations.", "color": "white"},
     # Other directives
-    "block-all-mixed-content": {"text": "Disallow HTTP on HTTPS pages (legacy-ish).", "color": "yellow"},
+    "block-all-mixed-content": {"text": "Disallow HTTP on HTTPS pages (deprecated).", "color": "yellow"},
     "referrer": {"text": "Deprecated. Use Referrer-Policy header.", "color": "yellow"},
     "require-sri-for": {"text": "Require SRI for scripts/styles.", "color": "white"},
+    "require-trusted-types-for": {"text": "Enforces Trusted Types at DOM XSS sinks (requires 'script').", "color": "white"},
+    "trusted-types": {"text": "Allowlist of Trusted Types policy names to prevent DOM XSS injection.", "color": "white"},
     "upgrade-insecure-requests": {"text": "Rewrite insecure URLs to HTTPS.", "color": "white"},
-    # Source expressions (examples + keywords)
-    "*": {"text": "Wildcard; allows any origin (except some schemes).", "color": "dark_orange"},
-    "'none'": {"text": "No sources allowed.", "color": "green"},
-    "'self'": {"text": "Same origin (scheme/host/port).", "color": "green"},
-    "data:": {"text": "Allow data: scheme (inline data).", "color": "yellow"},
+    # Experimental
+    "fenced-frame-src": {"text": "Valid sources for <fencedframe> elements (experimental).", "color": "yellow"},
+    "inline-speculation-rules": {"text": "Valid sources for inline speculation-rules scripts (experimental).", "color": "yellow"},
+    # Source expressions — scheme sources
+    "https:": {"text": "Allow all resources served over HTTPS.", "color": "yellow"},
+    "http:": {"text": "Allow all resources served over HTTP (insecure).", "color": "red"},
+    "data:": {"text": "Allow data: scheme (inline base64 data).", "color": "yellow"},
     "blob:": {"text": "Allow blob: object URLs.", "color": "yellow"},
-    "'unsafe-inline'": {"text": "Allow inline code/event handlers.", "color": "red"},
-    "'unsafe-eval'": {"text": "Allow eval()/Function constructor.", "color": "red"},
-    "'nonce-'": {"text": "Allow inline script/style with matching nonce.", "color": "green"},
-    "'sha256-'": {"text": "Allow inline script/style matching the hash.", "color": "green"},
+    # Source expressions — keywords
+    "*": {"text": "Wildcard; allows any origin (except data:/blob: and some schemes).", "color": "dark_orange"},
+    "'none'": {"text": "No sources allowed; cannot be combined with other values.", "color": "green"},
+    "'self'": {"text": "Same origin only (matching scheme, host, and port).", "color": "green"},
+    "'unsafe-inline'": {"text": "Allow inline scripts/styles and event handlers; defeats much of CSP.", "color": "red"},
+    "'unsafe-eval'": {"text": "Allow eval() and similar dynamic code execution APIs.", "color": "red"},
+    "'unsafe-hashes'": {"text": "Allow inline event handlers matched by hash without requiring nonces.", "color": "red"},
+    "'strict-dynamic'": {"text": "Propagate trust from a nonced/hashed script to scripts it loads dynamically.", "color": "yellow"},
+    "'wasm-unsafe-eval'": {"text": "Allow WebAssembly execution without requiring 'unsafe-eval'.", "color": "yellow"},
+    "'inline-speculation-rules'": {"text": "Allow inline <script type=\"speculationrules\"> without a nonce or hash.", "color": "yellow"},
+    "'trusted-types-eval'": {"text": "Relax eval()/Function() restrictions when Trusted Types enforcement is active.", "color": "yellow"},
+    "'report-sample'": {"text": "Include a code sample of the violating code in CSP violation reports.", "color": "white"},
+    "'nonce-'": {"text": "Allow inline script/style whose nonce attribute matches the nonce value.", "color": "green"},
+    "'sha256-'": {"text": "Allow inline script/style whose SHA-256 hash matches the given value.", "color": "green"},
+    "'sha384-'": {"text": "Allow inline script/style whose SHA-384 hash matches the given value.", "color": "green"},
+    "'sha512-'": {"text": "Allow inline script/style whose SHA-512 hash matches the given value.", "color": "green"},
 }
 
-DEPRECATED_OR_LEGACY = {"plugin-types", "disown-opener", "block-all-mixed-content", "prefetch-src"}
+DEPRECATED_OR_LEGACY = {
+    "child-src",
+    "plugin-types",
+    "disown-opener",
+    "block-all-mixed-content",
+    "prefetch-src",
+    "referrer",
+    "report-uri",
+    "reflected-xss",
+}
 
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {
@@ -1638,6 +1667,10 @@ def parse_csp(
                 norm = "'nonce-'"
             elif item.startswith("'sha256-"):
                 norm = "'sha256-'"
+            elif item.startswith("'sha384-"):
+                norm = "'sha384-'"
+            elif item.startswith("'sha512-"):
+                norm = "'sha512-'"
 
             if is_host(item):
                 saw_host_source = True

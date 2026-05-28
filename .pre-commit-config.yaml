@@ -1,0 +1,81 @@
+--- # -----------------------------------------------------------------------------
+
+# .pre-commit-config.yaml
+# -----------------------------------------------------------------------------
+# Setup (run once):
+#   pip install pre-commit
+#   pre-commit install            # installs the git hook
+#   pre-commit autoupdate         # pins every `rev` below to the latest release
+#   pre-commit run --all-files    # run against the whole repo the first time
+#
+# After this, `git commit` runs these checks automatically. No Claude tokens
+# are spent on linting/formatting.
+#
+# NOTE: the `rev` values below are a snapshot. Run `pre-commit autoupdate`
+# after copying this file so they point at current releases.
+repos:
+  # --- Built-in hygiene hooks (fast, milliseconds) -------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files # blocks accidental commits of big files
+      - id: check-merge-conflict # catches leftover <<<<<<< markers
+      - id: detect-private-key # stops a private key entering history
+      - id: mixed-line-ending
+
+  # --- Ruff: linter + formatter (also replaces isort via the "I" rules) ----
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff # lint; --fix auto-fixes what it can (incl. imports)
+        args: [--fix]
+      - id: ruff-format # formatter (Black-compatible)
+
+  # --- Secrets scanning: catch credentials before they hit history ---------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # --- TOML formatter (keeps pyproject.toml tidy) --------------------------
+  - repo: https://github.com/ComPWA/taplo-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: taplo-format
+
+  # --- Prettier: formats Markdown / YAML / JSON / CSS ----------------------
+  # Uses the prettier team's official mirror (the old pre-commit/mirrors-
+  # prettier repo was archived). pre-commit installs Node automatically.
+  - repo: https://github.com/prettier/pre-commit
+    rev: v2.0.0
+    hooks:
+      - id: prettier
+        # prettier doesn't format Python — scope it to what it should touch:
+        types_or: [markdown, yaml, json, css]
+
+  # --- Hadolint: Dockerfile linter -----------------------------------------
+  # AleksaC/hadolint-py ships the hadolint binary via a pip wheel, so it
+  # auto-installs with no Docker and no `brew install` needed. (The official
+  # hadolint/hadolint repo's `hadolint-docker` hook works too, but needs the
+  # Docker daemon running.)
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        # ignore specific rules if needed, e.g.:
+        # args: [--ignore, DL3008, --ignore, DL3009]
+
+  # --- Bandit: Python security linter --------------------------------------
+  # NOTE: Ruff's "S" rule category (extend-select = ["S"] in pyproject.toml)
+  # reimplements most of Bandit — you may not need this hook separately.
+  # - repo: https://github.com/PyCQA/bandit
+  #   rev: 1.8.3
+  #   hooks:
+  #     - id: bandit
+  #       args: ["-c", "pyproject.toml"]      # read config from [tool.bandit]
+  #       additional_dependencies: ["bandit[toml]"]  # needed to parse pyproject
+  #       exclude: ^tests/   # tests trip B101 (assert) constantly — skip them

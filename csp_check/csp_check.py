@@ -21,7 +21,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from string import Template
-from typing import Dict, List, Optional, Sequence, Callable
+from typing import Dict, List, Optional, Sequence
 
 import httpx
 from rich import box
@@ -29,9 +29,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.rule import Rule
-from rich.markdown import Markdown
-from rich.prompt import Prompt, Confirm
 
 # ---------------------------------------
 # Knowledge base
@@ -80,11 +77,6 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "'unsafe-eval'": {"text": "Allow eval()/Function constructor.", "color": "red"},
     "'nonce-'": {"text": "Allow inline script/style with matching nonce.", "color": "green"},
     "'sha256-'": {"text": "Allow inline script/style matching the hash.", "color": "green"},
-    # Example host patterns remain for docs but won't match real items:
-    "domain.example.com": {"text": "Specific host.", "color": "white"},
-    "*.example.com": {"text": "Any subdomain (wildcard).", "color": "dark_orange"},
-    "https://cdn.com": {"text": "Specific HTTPS host.", "color": "white"},
-    "https:": {"text": "Any HTTPS origin.", "color": "white"},
 }
 
 DEPRECATED_OR_LEGACY = {
@@ -98,17 +90,18 @@ DEPRECATED_OR_LEGACY = {
 }
 
 BYPASS_DOMAINS = {
-    "*.hotjar.com":        {"risks": ["exfil"]},
-    "ask.hotjar.io":       {"risks": ["exfil"]},
-    "*.facebook.com":      {"risks": ["exfil"]},
-    "*.jsdeliver.com":     {"risks": ["exec"]},
-    "cdn.jsdelivr.ne":     {"risks": ["exec"]},
-    "*.cloudfront.net":    {"risks": ["exfil", "exec"]},
-    "*.amazonaws.com":     {"risks": ["exfil", "exec"]},
+    "*.hotjar.com": {"risks": ["exfil"]},
+    "ask.hotjar.io": {"risks": ["exfil"]},
+    "*.facebook.com": {"risks": ["exfil"]},
+    "*.jsdeliver.com": {"risks": ["exec"]},
+    "cdn.jsdelivr.ne": {"risks": ["exec"]},
+    "*.cloudfront.net": {"risks": ["exfil", "exec"]},
+    "*.amazonaws.com": {"risks": ["exfil", "exec"]},
     "*.azurewebsites.net": {"risks": ["exfil", "exec"]},
-    "*.azurestaticapps.net":{"risks": ["exfil", "exec"]},
-    "*.herokuapp.com":     {"risks": ["exfil", "exec"]},
-    "*.firebaseapp.com":   {"risks": ["exfil", "exec"]},
+    "*.azurestaticapps.net": {"risks": ["exfil", "exec"]},
+    "*.herokuapp.com": {"risks": ["exfil", "exec"]},
+    "*.firebaseapp.com": {"risks": ["exfil", "exec"]},
+    "https://www.googletagmanager.com": {"risks": ["exec"]},
 }
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
@@ -357,8 +350,7 @@ def parse_csp(
     has_upgrade_insecure = False
     saw_host_source = False
     has_explicit_https_source = False
-    has_bypass = False
-
+    # has_bypass = False
 
     for part in parts:
         if not part:
@@ -405,19 +397,20 @@ def parse_csp(
             if norm == "https:" or lower_item.startswith("https://"):
                 has_explicit_https_source = True
 
-
             for patt, meta in BYPASS_DOMAINS.items():
-                    if domain_matches_bypass_domain(patt, norm):
-                        has_bypass = True
-                        bypass_possibilities.append({
+                if domain_matches_bypass_domain(patt, norm):
+                    # has_bypass = True
+                    bypass_possibilities.append(
+                        {
                             "directive": name,
                             "source_raw": item,
                             "matched_host": norm,
                             "pattern": patt,
                             "risks": meta["risks"],
-                        })
-                        #risk_label = ",".join(meta["risks"])
-                        #note = (note + " | " if note else "") + f"suspicious: {patt} ({risk_label})"
+                        }
+                    )
+                    # risk_label = ",".join(meta["risks"])
+                    # note = (note + " | " if note else "") + f"suspicious: {patt} ({risk_label})"
 
             # Coloring rules
             if is_wildcard_token(item) or norm in {"*", "data:", "blob:", "'unsafe-inline'", "'unsafe-eval'"}:
@@ -538,7 +531,7 @@ async def fetch_multiple_csps(
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT},
         cookies=cookies or {},
-        #proxies=proxies or None,
+        # proxies=proxies or None,
         verify=is_secure,
         follow_redirects=redirect,
         timeout=httpx.Timeout(timeout_s),
@@ -957,6 +950,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 # CLI
 # ---------------------------------------
 
+
 def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     """
     Show a Rich-styled prompt that lets the user paste a CSP.
@@ -1021,12 +1015,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("-u", "--url", help="Single URL/domain to check.")
     src.add_argument("-f", "--file", help="Path to a file with one URL per line.")
-    src.add_argument(
-        "--csp",
-        action="store_true",
-        help="Open an interactive input to paste a CSP and parse it."
-    )
-
+    src.add_argument("--csp", action="store_true", help="Open an interactive input to paste a CSP and parse it.")
 
     p.add_argument("-c", "--cookies", help="Semicolon-separated cookies: 'a=b; c=d'", default=None)
     p.add_argument(

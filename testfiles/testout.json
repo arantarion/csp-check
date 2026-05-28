@@ -81,9 +81,7 @@
     "requested_url": "twitter.com",
     "fetched_url": "https://twitter.com",
     "csp_raw": "connect-src 'self' blob: https://fonts.googleapis.com/css https://mapsresources-pa.googleapis.com https://maps.googleapis.com https://translate.googleapis.com https://www.gstatic.com/maps/ https://*.pscp.tv https://*.twimg.com https://*.video.pscp.tv https://aa.twitter.com https://aa.x.com https://accounts.google.com/gsi/ https://ads-api.twitter.com https://ads-api.x.com https://api-stream.twitter.com https://api-stream.x.com https://api.twitter.com https://api.x.ai https://api.x.com https://api.x.com https://caps.twitter.com https://caps.x.com https://grok.x.com https://jf.twitter.com https://jf.x.com https://jf-t.x.com https://pay.twitter.com https://pay.x.com https://sentry.io https://ton-staging.atla.twitter.com https://ton-staging.atla.x.com https://ton-staging.pdxa.twitter.com https://ton-staging.pdxa.x.com https://ton.twitter.com https://ton.local.twitter.com https://ton.x.com https://twitter.com https://upload.twitter.com https://upload.x.com https://www.google-analytics.com https://x.com https://grok-api.gcp.mouseion.dev https://assets.mouseion.dev https://grok.com https://assets.grok.com https://*.adtrafficquality.google https://*.googlesyndication.com https://*.doubleclick.net https://adservice.google.com https://www.googleadservices.com https://pagead2.googlesyndication.com https://www.google.com https://google.com https://via.intercom.io https://api.intercom.io https://api.au.intercom.io https://api.eu.intercom.io https://api-iam.intercom.io https://api-iam.eu.intercom.io https://api-iam.au.intercom.io https://api-ping.intercom.io https://nexus-websocket-a.intercom.io wss://nexus-websocket-a.intercom.io https://nexus-websocket-b.intercom.io wss://nexus-websocket-b.intercom.io https://nexus-europe-websocket.intercom.io wss://nexus-europe-websocket.intercom.io https://nexus-australia-websocket.intercom.io wss://nexus-australia-websocket.intercom.io https://uploads.intercomcdn.com https://uploads.intercomcdn.eu https://uploads.au.intercomcdn.com https://uploads.eu.intercomcdn.com https://uploads.intercomusercontent.com https://production.plaid.com/ https://sandbox.plaid.com/ https://ingestion.dv.socure.io https://network.dv.socure.io/ https://analytics.dv.socure.io/ https://payments-dev.x.com/customer/wasm/forward-with-v1.wasm https://payments-staging.x.com/customer/wasm/forward-with-v1.wasm https://payments-prod.x.com/customer/wasm/forward-with-v1.wasm https://money-dev.x.com/customer/wasm/forward-with-v1.wasm https://money-staging.x.com/customer/wasm/forward-with-v1.wasm https://money.x.com/customer/wasm/forward-with-v1.wasm https://api.stripe.com https://money.x.com/i/cardholder-agreement.summary.json https://money.x.com/i/acceptable-use-policy.summary.json https://money.x.com/terms-and-conditions.summary.json https://m.castle.io https://checkoutshopper-live.adyen.com wss://*.pscp.tv https://vmap.snappytv.com https://vmapstage.snappytv.com https://vmaprel.snappytv.com https://vmap.grabyo.com https://dhdsnappytv-vh.akamaihd.net https://pdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mpdhdsnappytv-vh.akamaihd.net https://mmdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mpdhdsnappytv-vh.akamaihd.net https://mmdhdsnappytv-vh.akamaihd.net https://dwo3ckksxlb0v.cloudfront.net https://media.riffsy.com https://*.giphy.com https://media.tenor.com https://c.tenor.com wss://chat-ws.x.com https://d1muhwhmpsz4u8.cloudfront.net/ https://d2bchqfeno8n2m.cloudfront.net/ https://d2shtph9y6bxk.cloudfront.net/ https://xchat-hsm-staging.x.com/ https://realm-a.x.com https://realm-b.x.com https://realm-west1.x.com https://realm-east1.x.com https://hsm-staging.x.com https://ads-twitter.com https://analytics.twitter.com https://analytics.x.com         ; default-src 'self'; form-action 'self' https://twitter.com https://*.twitter.com https://x.com https://*.x.com https://localhost.twitter.com:3443 https://localhost.x.com:3443 https://intercom.help https://api-iam.intercom.io https://api-iam.eu.intercom.io https://api-iam.au.intercom.io; font-src 'self' https://*.twimg.com https://js.intercomcdn.com https://fonts.intercomcdn.com; frame-src 'self' https://accounts.google.com/ https://accounts.google.com/gsi/ https://cards-frame.twitter.com https://cdn.plaid.com/ https://client-api.arkoselabs.com/ https://content.googleapis.com/ https://iframe.arkoselabs.com/ https://mobile.twitter.com https://mobile.x.com https://pay.twitter.com https://pay.x.com https://google.com https://www.google.com https://intercom-sheets.com https://www.intercom-reporting.com https://www.youtube.com https://player.vimeo.com https://fast.wistia.net https://console.googletagservices.com https://*.doubleclick.net https://*.adtrafficquality.google https://*.safeframe.googlesyndication.com https://www.googleadservices.com https://googleadservices.com https://adservice.google.com https://*.googlesyndication.com https://td.doubleclick.net https://payments-dev.x.com/ https://payments-staging.x.com/ https://payments-prod.x.com/ https://sdn.payments-dev.x.com/ https://sdn.payments-staging.x.com/ https://sdn.payments-prod.x.com/ https://money-dev.x.com/ https://money-staging.x.com/ https://money.x.com/ https://sdn.money-dev.x.com/ https://sdn.money-staging.x.com/ https://sdn.money.x.com/ https://p2pcreditcardiframesandbox.crbcos.com https://p2pcreditcardiframe.crbcos.com https://verify-sandbox.plaid.com/ https://*.js.stripe.com https://js.stripe.com https://hooks.stripe.com https://cdn.getpinwheel.com/ https://artifacts.grokusercontent.com https://twitter.com https://x.com  https://recaptcha.net/recaptcha/; img-src 'self' blob: data: https://www.google.com/maps/place/ https://imgs.search.brave.com https://*.cdn.twitter.com https://*.cdn.x.com https://ton.twitter.com https://ton.x.com https://*.twimg.com https://analytics.twitter.com https://analytics.x.com https://cm.g.doubleclick.net https://www.google-analytics.com https://maps.googleapis.com https://www.periscope.tv https://www.pscp.tv https://ads-twitter.com https://ads-api.twitter.com https://ads-api.x.com https://api.x.com https://developer.x.com blob: data: https://js.intercomcdn.com https://static.intercomassets.com https://downloads.intercomcdn.com https://downloads.intercomcdn.eu https://downloads.au.intercomcdn.com https://uploads.intercomusercontent.com https://gifs.intercomcdn.com https://video-messages.intercomcdn.com https://messenger-apps.intercom.io https://messenger-apps.eu.intercom.io https://messenger-apps.au.intercom.io https://*.intercom-attachments-1.com https://*.intercom-attachments.eu https://*.au.intercom-attachments.com https://*.intercom-attachments-2.com https://*.intercom-attachments-3.com https://*.intercom-attachments-4.com https://*.intercom-attachments-5.com https://*.intercom-attachments-6.com https://*.intercom-attachments-7.com https://*.intercom-attachments-8.com https://*.intercom-attachments-9.com https://static.intercomassets.eu https://static.au.intercomassets.com https://media.riffsy.com https://*.giphy.com https://media.tenor.com https://c.tenor.com https://*.pscp.tv https://*.periscope.tv https://prod-periscope-profile.s3-us-west-2.amazonaws.com https://platform-lookaside.fbsbx.com https://scontent.xx.fbcdn.net https://scontent-sea1-1.xx.fbcdn.net https://*.googleusercontent.com https://t.co/1/i/adsct https://*.googleusercontent.com https://*.gstatic.com https://*.googlesyndication.com https://*.adtrafficquality.google https://www.google.com/ads/measurement/ https://*.google.com/ads/measurement/ https://googleads.g.doubleclick.net https://google.com https://www.google.com https://plaid-merchant-logos.plaid.com https://plaid-counterparty-logos.plaid.com https://assets.mouseion.dev https://assets.grok.com; manifest-src 'self'; media-src 'self' data: blob: https://twitter.com https://x.com https://*.twimg.com https://*.vine.co https://*.pscp.tv https://*.video.pscp.tv https://js.intercomcdn.com https://downloads.intercomcdn.com https://downloads.intercomcdn.eu https://downloads.au.intercomcdn.com https://dhdsnappytv-vh.akamaihd.net https://pdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mpdhdsnappytv-vh.akamaihd.net https://mmdhdsnappytv-vh.akamaihd.net https://mdhdsnappytv-vh.akamaihd.net https://mpdhdsnappytv-vh.akamaihd.net https://mmdhdsnappytv-vh.akamaihd.net https://dwo3ckksxlb0v.cloudfront.net; object-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://*.twimg.com https://recaptcha.net/recaptcha/ http://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js https://accounts.google.com/gsi/client https://apis.google.com/js/api.js https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js https://client-api.arkoselabs.com/ https://static.ads-twitter.com https://twitter.com https://www.google-analytics.com https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js https://x.com https://sdn.payments-dev.x.com/assets/loader.min.js https://sdn.payments-staging.x.com/assets/loader.min.js https://sdn.payments-prod.x.com/assets/loader.min.js https://sdn.money-dev.x.com/assets/loader.min.js https://sdn.money-staging.x.com/assets/loader.min.js https://sdn.money.x.com/assets/loader.min.js https://sdk.dv.socure.io/latest/device-risk-sdk.js https://cdn.plaid.com/link/v2/stable/link-initialize.js https://payments-dev.x.com/customer/wasm/xxp-forward-with-sdk.js https://payments-staging.x.com/customer/wasm/xxp-forward-with-sdk.js https://payments-prod.x.com/customer/wasm/xxp-forward-with-sdk.js https://money-dev.x.com/customer/wasm/xxp-forward-with-sdk.js https://money-staging.x.com/customer/wasm/xxp-forward-with-sdk.js https://money.x.com/customer/wasm/xxp-forward-with-sdk.js https://js.stripe.com https://*.js.stripe.com https://cdn.getpinwheel.com/pinwheel-v3.1.0.js https://securepubads.g.doubleclick.net https://www.googletagservices.com https://*.googletagservices.com https://pagead2.googlesyndication.com https://adservice.google.com https://www.googleadservices.com https://ads.google.com https://tpc.googlesyndication.com https://*.tpc.googlesyndication.com https://www.google.com https://googleads.g.doubleclick.net https://app.intercom.io https://widget.intercom.io https://js.intercomcdn.com   'wasm-unsafe-eval'  'nonce-M2ExNDRmMmYtMTNmMi00ODJjLWE1NDAtMWRlOTZmOTUyNWY5'; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style https://*.twimg.com; worker-src 'self' blob:; report-uri https://x.com/i/csp_report?a=O5RXE%3D%3D%3D&ro=false",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -2386,9 +2384,7 @@
     "requested_url": "vk.com",
     "fetched_url": "https://vk.com",
     "csp_raw": "default-src * data: blob: about: vkcalls:;script-src 'self' https://vk.com https://*.vk.com https://vk.ru https://*.vk.ru https://static.vk.me https://*.mail.ru https://r.mradx.net https://s.ytimg.com https://platform.twitter.com https://cdn.syndication.twimg.com https://www.instagram.com https://connect.facebook.net https://telegram.org https://yandex.ru https://*.yandex.ru https://*.google-analytics.com https://*.youtube.com https://maps.googleapis.com https://translate.googleapis.com https://*.google.com https://google.com https://*.vkpartner.ru https://*.moatads.com https://*.adlooxtracking.ru https://*.serving-sys.ru https://*.weborama-tech.ru https://*.gstatic.com https://*.google.ru https://securepubads.g.doubleclick.net https://cdn.ampproject.org https://www.googletagmanager.com https://googletagmanager.com https://*.vk-cdn.net https://*.hit.gemius.pl https://yastatic.net https://analytics.tiktok.com https://*.vkvideo.ru 'unsafe-inline' 'unsafe-eval' blob:;style-src https://vk.com https://*.vk.com https://vk.ru https://*.vk.ru https://static.vk.me https://r.mradx.net https://ton.twimg.com https://tagmanager.google.com https://platform.twitter.com https://*.googleapis.com https://*.vkvideo.ru 'self' 'unsafe-inline';report-uri /csp",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -2849,9 +2845,7 @@
     "requested_url": "mail.ru",
     "fetched_url": "https://mail.ru",
     "csp_raw": "base-uri 'self'; connect-src https://*.adlooxtracking.com https://*.adlooxtracking.ru https://*.adsafeprotected.com https://*.cold-video.dzeninfra.ru https://*.doubleverify.com https://*.dzen.ru https://*.extcdn.dzeninfra.ru https://*.gstatic.com https://*.hot-video.dzeninfra.ru https://*.imgsmail.ru https://*.mail.ru https://*.moatads.com https://*.mradx.net https://*.mycdn.me https://*.odkl.ru https://*.ok.ru https://*.okcdn.ru https://api.rustore.ru https://*.serving-sys.com https://*.serving-sys.ru https://*.vk.com https://*.vk.ru https://*.vkuser.net https://*.weborama-tech.ru https://*.weborama.fr https://an.yandex.ru https://avatars.dzeninfra.ru https://b.delivery.consentmanager.net https://cdn.consentmanager.mgr.consensu.org https://cdn.consentmanager.net https://cdn.dzen.ru https://cold-video.dzeninfra.ru https://consentmanager.mgr.consensu.org https://home.cdn-vk.ru https://dzen.ru https://home.mrgcdn.ru https://jstracer.yandex.ru https://log.strm.yandex.ru https://mail.ru https://mc.yandex.by https://mc.yandex.com https://mc.yandex.fr https://mc.yandex.kz https://mc.yandex.md https://mc.yandex.ru https://mc.yandex.uz https://ok.ru https://playlog.dzen.ru https://sdk-api.apptracer.ru https://s3.dzeninfra.ru https://static.dzeninfra.ru https://strm.yandex.ru https://telemetry.dzen.ru https://verify.yandex.ru https://video.dzen.ru https://vk.com https://vk.ru https://yandex.ru https://www.google-analytics.com https://yandex.st https://yastat.net https://yastatic.net https://*.strm.yandex.net https://ymetrica1.com https://csp.yandex.net; default-src 'none'; font-src blob: data: https://*.imgsmail.ru https://*.mail.ru https://*.mradx.net https://an.yandex.ru https://yastat.net https://yastatic.net 'self'; form-action https://account.mail.ru https://auth.mail.ru https://e.mail.ru https://yandex.ru https://widgets.mail.ru 'self'; frame-src https://*.doubleverify.com https://*.imgsmail.ru https://*.mail.ru https://*.mradx.net https://*.ok.ru https://*.vk.com https://*.vk.ru https://*.yandex.ru https://app.appsflyer.com https://awaps.yandex.net https://mail.ru https://mc.yandex.by https://mc.yandex.com https://mc.yandex.fr https://mc.yandex.kz https://mc.yandex.md https://mc.yandex.ru https://mc.yandex.uz https://mini.vkplay.ru https://ok.ru https://vk.com https://vk.ru https://vkvideo.ru https://yandex.ru https://yastat.net https://yastatic.net https://widgets.mail.ru https://forms.cdn-vk.ru; img-src blob: data: https://*.mail.ru https://*.okcdn.ru https://*.radar.imgsmail.ru https://*.targetads.io https://static.rustore.ru https://*.userapi.com https://*.zen.zeta.dzen.ru https://presizer.imgsmail.ru https://promoimages.datacloudmail.ru https://promoimages.hb.ru-msk.vkcloud-storage.ru https://i.mycdn.me https://a.delivery.consentmanager.net https://ad.adriver.ru https://amc.yandex.ru https://an.yandex.ru https://avatars.dzeninfra.ru https://avatars.mds.yandex.net https://bs.serving-sys.com https://bs.serving-sys.ru https://bs.yandex.ru https://cdn.consentmanager.mgr.consensu.org https://cdn.consentmanager.net https://cdn.dzen.ru https://counter.yadro.ru https://d.mradx.net https://dzen.ru https://favicon.yandex.net https://fmdata.imgsmail.ru https://home.cdn-vk.ru https://home.imgsmail.ru https://img.imgsmail.ru https://imgs2.imgsmail.ru https://impression.appsflyer.com https://likemore-go.imgsmail.ru https://limg.imgsmail.ru https://mc.yandex.by https://mc.yandex.com https://mc.yandex.fr https://mc.yandex.kz https://mc.yandex.md https://mc.yandex.ru https://mc.yandex.uz https://mgcomru.solution.weborama.fr https://pixel.adlooxtracking.ru https://playlog.dzen.ru https://pogoda.imgsmail.ru https://promoimages.hb.bizmrg.com https://pulse.imgsmail.ru https://r.mradx.net https://s3.dzeninfra.ru https://static.dzeninfra.ru https://storage.mds.yandex.net https://video.dzen.ru https://prod-backend.hb.bizmrg.com https://vk.com https://vk.ru https://vkplay.ru https://wcm-ru.frontend.weborama.fr https://wcm.weborama-tech.ru https://www.tns-counter.ru https://www.google-analytics.com https://www.googletagmanager.com https://yandex.ru https://yastatic.net 'self'; manifest-src https://limg.imgsmail.ru; media-src blob: data: https://*.cold-video.dzeninfra.ru https://*.extcdn.dzeninfra.ru https://*.hot-video.dzeninfra.ru https://*.imgsmail.ru https://*.mail.ru https://*.mradx.net https://*.ok.ru https://*.strm.yandex.ru https://*.vk.com https://*.vk.ru https://*.yandex.net https://cdn.dzen.ru https://cold-video.dzeninfra.ru https://home.cdn-vk.ru https://mail.ru https://ok.ru https://strm.yandex.ru https://video.dzen.ru https://vk.com https://vk.ru https://yandex.ru https://yandex.st https://yastat.net https://yastatic.net https://*.strm.yandex.net https://*.mycdn.me https://*.okcdn.ru https://*.vkuser.net https://*.targetads.io; script-src https://*.adlooxtracking.com https://*.adlooxtracking.ru https://*.adsafeprotected.com https://*.doubleverify.com https://*.imgsmail.ru https://*.mail.ru https://*.moatads.com https://*.mradx.net https://*.serving-sys.com https://*.serving-sys.ru https://*.vk.com https://*.vk.ru https://*.weborama-tech.ru https://*.weborama.fr https://an.yandex.ru https://b.delivery.consentmanager.net https://cdn.consentmanager.mgr.consensu.org https://cdn.consentmanager.net https://consentmanager.mgr.consensu.org https://home.cdn-vk.ru https://home.mrgcdn.ru https://iframe.s3.yandex.net https://mail.ru https://mc.yandex.by https://mc.yandex.com https://mc.yandex.fr https://mc.yandex.kz https://mc.yandex.md https://mc.yandex.ru https://mc.yandex.uz https://ok.ru https://st.mycdn.me https://st.okcdn.ru https://static.dzeninfra.ru https://vk.com https://vk.ru https://www.google-analytics.com https://ssl.google-analytics.com https://yandex.ru https://yandex.st https://yastat.net https://yastatic.net 'unsafe-eval' 'unsafe-inline' 'nonce-e33a650f5687f1cdb6b1d65c153ac63b' 'strict-dynamic' 'report-sample'; style-src blob: https://*.imgsmail.ru https://*.mail.ru https://*.mradx.net https://b.delivery.consentmanager.net https://cdn.consentmanager.mgr.consensu.org https://cdn.consentmanager.net https://consentmanager.mgr.consensu.org https://home.cdn-vk.ru https://home.mrgcdn.ru https://static.dzeninfra.ru https://yandex.st https://yastat.net https://yastatic.net 'unsafe-eval' 'unsafe-inline';  report-uri https://cspreport.mail.ru/home?disposition=report&rev=21.10.25;",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -4861,9 +4855,7 @@
     "requested_url": "github.com",
     "fetched_url": "https://github.com",
     "csp_raw": "default-src 'none'; base-uri 'self'; child-src github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.github.com/assets-cdn/worker/; connect-src 'self' uploads.github.com www.githubstatus.com collector.github.com raw.githubusercontent.com api.github.com github-cloud.s3.amazonaws.com github-production-repository-file-5c1aeb.s3.amazonaws.com github-production-upload-manifest-file-7fdce7.s3.amazonaws.com github-production-user-asset-6210df.s3.amazonaws.com *.rel.tunnels.api.visualstudio.com wss://*.rel.tunnels.api.visualstudio.com github.githubassets.com objects-origin.githubusercontent.com copilot-proxy.githubusercontent.com proxy.individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterprise.githubcopilot.com *.actions.githubusercontent.com wss://*.actions.githubusercontent.com productionresultssa0.blob.core.windows.net/ productionresultssa1.blob.core.windows.net/ productionresultssa2.blob.core.windows.net/ productionresultssa3.blob.core.windows.net/ productionresultssa4.blob.core.windows.net/ productionresultssa5.blob.core.windows.net/ productionresultssa6.blob.core.windows.net/ productionresultssa7.blob.core.windows.net/ productionresultssa8.blob.core.windows.net/ productionresultssa9.blob.core.windows.net/ productionresultssa10.blob.core.windows.net/ productionresultssa11.blob.core.windows.net/ productionresultssa12.blob.core.windows.net/ productionresultssa13.blob.core.windows.net/ productionresultssa14.blob.core.windows.net/ productionresultssa15.blob.core.windows.net/ productionresultssa16.blob.core.windows.net/ productionresultssa17.blob.core.windows.net/ productionresultssa18.blob.core.windows.net/ productionresultssa19.blob.core.windows.net/ github-production-repository-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.amazonaws.com insights.github.com wss://alive.github.com wss://alive-staging.github.com api.githubcopilot.com api.individual.githubcopilot.com api.business.githubcopilot.com api.enterprise.githubcopilot.com edge.fullstory.com rs.fullstory.com; font-src github.githubassets.com; form-action 'self' github.com gist.github.com copilot-workspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors 'none'; frame-src viewscreen.githubusercontent.com notebooks.githubusercontent.com www.youtube-nocookie.com; img-src 'self' data: blob: github.githubassets.com media.githubusercontent.com camo.githubusercontent.com identicons.github.com avatars.githubusercontent.com private-avatars.githubusercontent.com github-cloud.s3.amazonaws.com objects.githubusercontent.com release-assets.githubusercontent.com secured-user-images.githubusercontent.com/ user-images.githubusercontent.com/ private-user-images.githubusercontent.com opengraph.githubassets.com marketplace-screenshots.githubusercontent.com/ copilotprodattachments.blob.core.windows.net/github-production-copilot-attachments/ github-production-user-asset-6210df.s3.amazonaws.com customer-stories-feed.github.com spotlights-feed.github.com objects-origin.githubusercontent.com *.githubusercontent.com images.ctfassets.net/8aevphvgewt8/; manifest-src 'self'; media-src github.com user-images.githubusercontent.com/ secured-user-images.githubusercontent.com/ private-user-images.githubusercontent.com github-production-user-asset-6210df.s3.amazonaws.com gist.github.com github.githubassets.com assets.ctfassets.net/8aevphvgewt8/ videos.ctfassets.net/8aevphvgewt8/; script-src github.githubassets.com; style-src 'unsafe-inline' github.githubassets.com; upgrade-insecure-requests; worker-src github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.github.com/assets-cdn/worker/",
-    "deprecated_used": [
-      "child-src"
-    ],
+    "deprecated_used": ["child-src"],
     "error": null,
     "policies": [
       {
@@ -5624,9 +5616,7 @@
     "requested_url": "ok.ru",
     "fetched_url": "https://ok.ru",
     "csp_raw": "default-src data: 'self' 'unsafe-inline' 'unsafe-eval' ok.ru *.ok.ru odnoklassniki.ru *.odnoklassniki.ru okcdn.ru http://*.okcdn.ru https://*.okcdn.ru mycdn.me http://*.mycdn.me https://*.mycdn.me http://st-ok.cdn-vk.ru https://st-ok.cdn-vk.ru http://st-ok-pts.cdn-vk.ru https://st-ok-pts.cdn-vk.ru wss://ad.mail.ru *.mail.ru *.imgsmail.ru *.mradx.net *.serving-sys.com *.googleapis.com *.gstatic.com www.google.com https://api-maps.yandex.ru yastatic.net yandex.st *.doubleverify.com *.adsafeprotected.com https://cdn.consentmanager.net https://football.sportmail.ru *.google.ru *.google.com *.googlesyndication.com *.yandex.ru static.dzeninfra.ru connect.ok.ru https://connect.ok.ru blob:;  script-src 'unsafe-inline' 'unsafe-eval' *.mail.ru https://*.mail.ru *.imgsmail.ru *.mradx.net ok.ru *.ok.ru odnoklassniki.ru *.odnoklassniki.ru okcdn.ru http://*.okcdn.ru https://*.okcdn.ru http://st-ok.cdn-vk.ru https://st-ok.cdn-vk.ru http://st-ok-pts.cdn-vk.ru https://st-ok-pts.cdn-vk.ru mycdn.me http://*.mycdn.me https://*.mycdn.me mc.yandex.ru an.yandex.ru yastatic.net yandex.st *.google-analytics.com api-maps.yandex.ru https://api-maps.yandex.ru https://clck.yandex.ru *.googleapis.com *.gstatic.com www.google.com www.youtube.com https://www.youtube.com *.ytimg.com https://*.ytimg.com *.doubleverify.com *.dvtps.com *.doubleclick.net *.googletagservices.com *.googlesyndication.com *.googleadservices.com *.goodgame.ru https://*.goodgame.ru https://*.moatads.com *.adlooxtracking.com *.adlooxtracking.ru *.adsafeprotected.com *.serving-sys.com *.serving-sys.ru *.weborama.fr *.weborama-tech.ru https://enterprise.api-maps.yandex.ru https://suggest-maps.yandex.ru https://*.hit.gemius.pl https://*.consentmanager.net https://gum.criteo.com https://football.sportmail.ru *.googletagmanager.com connect.facebook.net *.google.ru *.google.com *.googlesyndication.com yandex.ru static.dzeninfra.ru *.adtrafficquality.google;  worker-src blob: 'self';  connect-src * wss: blob: data:;  font-src * data: blob:; frame-src * blob: 'self';  img-src * data: blob: about:;  media-src * data: blob:;  object-src *;  report-uri /csp/report;",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -7301,10 +7291,7 @@
     "requested_url": "nytimes.com",
     "fetched_url": "https://nytimes.com",
     "csp_raw": "upgrade-insecure-requests; default-src data: 'unsafe-inline' 'unsafe-eval' https: nytresource:; script-src data: 'unsafe-inline' 'unsafe-eval' https: blob: nytresource:; style-src data: 'unsafe-inline' https: nytresource:; img-src data: https: blob: android-webview-video-poster: nytresource:; font-src data: https: nytresource:; connect-src data: https: wss: blob: nytresource:; media-src data: https: blob: nytresource:; object-src https:; child-src https: data: blob: nytresource:; form-action https: nytimes: nytcooking: nytxwd:; report-uri https://csp.nytimes.com/report;",
-    "deprecated_used": [
-      "child-src",
-      "report-uri"
-    ],
+    "deprecated_used": ["child-src", "report-uri"],
     "error": null,
     "policies": [
       {
@@ -8313,9 +8300,7 @@
     "requested_url": "aol.com",
     "fetched_url": "https://aol.com",
     "csp_raw": "sandbox allow-scripts; default-src 'self'; img-src https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; report-uri https://csp.yahoo.com/beacon/csp?src=redirect",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -10455,10 +10440,7 @@
     "requested_url": "paytm.com",
     "fetched_url": "https://paytm.com",
     "csp_raw": "script-src 'self' 'unsafe-inline' https://*.paytm.in https://*.paytm.com https://*.youtube.com https://*.googletagmanager.com https://static.cloudflareinsights.com;   frame-src 'self' https://*.paytm.in https://*.paytm.com https://*.youtube.com https://esg.churchgatepartners.com https://www.googletagmanager.com;   child-src 'self' https://*.paytm.in https://*.paytm.com https://*.youtube.com https://esg.churchgatepartners.com https://www.googletagmanager.com;   font-src https://fonts.gstatic.com https://pwebassets.paytm.com;   report-uri https://csp-report.mypaytm.com/reportcspviolations.php;   report-to https://csp-report.mypaytm.com/reportcspviolations.php;   frame-ancestors 'self';   object-src 'none';   img-src 'self' https://paytm.com https://*.paytm.com https://*.paytm.in https://*.paytmbank.com https://www.google.com;   connect-src 'self' https://paytm.com wss://*.paytm.com https://*.paytm.com https://*.paytm.in https://*.paytmdgt.io https://*.googleapis.com https://*.google-analytics.com https://*.doubleclick.net https://analytics.google.com https://www.google.com;   base-uri 'self';",
-    "deprecated_used": [
-      "child-src",
-      "report-uri"
-    ],
+    "deprecated_used": ["child-src", "report-uri"],
     "error": null,
     "policies": [
       {
@@ -11122,10 +11104,7 @@
     "requested_url": "chaturbate.com",
     "fetched_url": "https://chaturbate.com",
     "csp_raw": "default-src 'self';  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.mmcdn.com https://*.highwebmedia.com https://*.chaturbate.com https://chaturbate.com https://ajax.googleapis.com https://js-agent.newrelic.com https://cdnjs.cloudflare.com https://www.google-analytics.com https://*.googletagmanager.com https://www.google.com/recaptcha/ https://www.google.com/cv/ https://www.gstatic.com/recaptcha/ https://www.gstatic.com/cv/ https://www.gstatic.com/eureka/ https://www.gstatic.com/cast/ https://*.nr-data.net https://player.vimeo.com/api/player.js https://static.hotjar.com https://script.hotjar.com ;  style-src 'self' data: 'unsafe-inline' https://*.mmcdn.com https://*.highwebmedia.com https://cdnjs.cloudflare.com https://fonts.googleapis.com https://static.hotjar.com https://script.hotjar.com;  img-src 'self' data: https://*.mmcdn.com https://*.highwebmedia.com https://*.stream.highwebmedia.com https://*.chaturbate.com https://chaturbate.com https://*.google-analytics.com https://*.googletagmanager.com https://static-pub.highwebmedia.com https://s3pv.highwebmedia.com https://cbphotovideo.s3.amazonaws.com https://cbphotovideo-eu.s3.amazonaws.com https://static-pub.highwebmedia.com.s3.amazonaws.com https://wowdvr.s3.amazonaws.com https://cbvideoupload.s3.amazonaws.com https://cdnjs.cloudflare.com https://www.gstatic.com https://*.nr-data.net https://stats.g.doubleclick.net https://cbgames.s3.amazonaws.com https://player.vimeo.com https://script.hotjar.com http://script.hotjar.com ;  font-src 'self' data: https://*.mmcdn.com https://*.highwebmedia.com https://cdnjs.cloudflare.com https://fonts.gstatic.com http://script.hotjar.com https://script.hotjar.com ;  connect-src 'self' blob: blob https://*.mmcdn.com wss://*.mmcdn.com wss://*.mmcdn.com:8443 https://*.highwebmedia.com wss://*.highwebmedia.com wss://*.highwebmedia.com:8443 https://*.nr-data.net https://*.chaturbate.com https://chaturbate.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://*.googletagmanager.com https://cbvideoupload.s3-accelerate.amazonaws.com https://stats.g.doubleclick.net https://internet-up.ably-realtime.com https://static-pub.highwebmedia.com https://s3pv.highwebmedia.com https://cbphotovideo.s3.amazonaws.com https://cbphotovideo-eu.s3.amazonaws.com https://static-pub.highwebmedia.com.s3.amazonaws.com https://wowdvr.s3.amazonaws.com https://cbvideoupload.s3.amazonaws.com https://tls-use1.fpapi.io https://use1.fptls.com https://eun1.fptls.com https://aps1.fptls.com https://*.hotjar.com https://*.hotjar.io wss://*.hotjar.com ;  media-src 'self' https://*.mmcdn.com https://*.highwebmedia.com https://*.chaturbate.com https://chaturbate.com mediasource: blob: data: https://storage.googleapis.com https://static-pub.highwebmedia.com https://s3pv.highwebmedia.com https://cbphotovideo.s3.amazonaws.com https://cbphotovideo-eu.s3.amazonaws.com https://static-pub.highwebmedia.com.s3.amazonaws.com https://wowdvr.s3.amazonaws.com https://cbvideoupload.s3.amazonaws.com;  object-src 'self' https://*.mmcdn.com https://*.highwebmedia.com https://download.macromedia.com https://static-pub.highwebmedia.com https://s3pv.highwebmedia.com https://cbphotovideo.s3.amazonaws.com https://cbphotovideo-eu.s3.amazonaws.com https://static-pub.highwebmedia.com.s3.amazonaws.com https://wowdvr.s3.amazonaws.com https://cbvideoupload.s3.amazonaws.com ;  frame-src 'self' https://*.mmcdn.com https://*.chaturbate.com https://chaturbate.com https://*.highwebmedia.com https://adserver.exoticads.com https://www.google.com/recaptcha/ https://*.wnu.com https://wnu.com https://checkout.2000charge.com https://www.sofort.com https://*.girogate.de https://player.vimeo.com https://vars.hotjar.com https://directory-live.cb.dev https://directory-v3-live.cb.dev https://*.live.mmwebc.dev https://cbxyz.com ;  child-src 'self' blob: blob ;  worker-src 'self' blob: blob ;  form-action 'self' https://*.chaturbate.com https://chaturbate.com https://*.stream.highwebmedia.com https://*.wnu.com https://wnu.com https://devportal.cb.dev https://*.web.amer-1.jumio.ai https://saas-onboarding.incodesmile.com https://smartpay.coinsmart.com https://crypto-payments.net https://secure.paygarden.com ;  manifest-src 'self' https://*.mmcdn.com https://*.highwebmedia.com ;  report-uri https://report-uri.mmcdn.com/r/t/csp/enforce;",
-    "deprecated_used": [
-      "child-src",
-      "report-uri"
-    ],
+    "deprecated_used": ["child-src", "report-uri"],
     "error": null,
     "policies": [
       {
@@ -12455,9 +12434,7 @@
     "requested_url": "archive.org",
     "fetched_url": "https://archive.org",
     "csp_raw": "report-uri https://archive.org/services/csp-report; default-src *; img-src * data: blob:; object-src 'none'; media-src * blob:; connect-src * data:; style-src 'unsafe-inline' https://archive.org/ https://archive.org https://esm.archive.org/ https://esm.ext.archive.org/ https://offshoot.prod.archive.org/ https://av.archive.org/css/ https://av.dev.archive.org/css/ https://accounts.google.com/gsi/ https://synerg.adp.com/; script-src 'nonce-3350b8881a9a9479884a0bb5e35c0249' https://archive.org/includes/ https://archive.org/includes/ https://archive.org/components/ https://archive.org/components/ https://archive.org/v/ https://archive.org/v/ https://archive.org/upload/app/ https://archive.org/offshoot_assets/ https://archive.org/offshoot_assets/ https://esm.archive.org/ https://esm.ext.archive.org/ https://polyfill.archive.org/v3/polyfill.min.js https://offshoot.prod.archive.org/ https://av.archive.org/ https://av.dev.archive.org/ https://openlibrary.org/query.json https://emularity-engine.ux-b.archive.org/ https://emularity-config.ux-b.archive.org/ https://emularity-bios.ux-b.archive.org/ https://archive.org/services/emularity/ https://archive.org/services/emularity/ 'wasm-unsafe-eval' 'sha256-CoX53XgCdkM1zegYEEpMUeYIZnv663inNm8bQv2VRbM=' https://accounts.google.com/gsi/ https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://workforcenow.adp.com/ https://synerg.adp.com/ https://apollo.archive.org",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -14919,10 +14896,7 @@
     "requested_url": "badoo.com",
     "fetched_url": "https://badoo.com",
     "csp_raw": "default-src 'self' https://consent.badoo.com; script-src 'self' 'unsafe-inline' 'report-sample' 'nonce-M0H+4FDoL5whKKy5J7mBXw==' badoocdn.com *.badoocdn.com https://consent.badoo.com https://*.googletagmanager.com https://tr.snapchat.com https://tr-shadow.snapchat.com https://badoo-api.arkoselabs.com; style-src 'self' 'unsafe-inline'; connect-src 'self' *.badoo.com *.badoo.eu *.badoo.us https://consent.badoo.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.g.doubleclick.net https://*.google.com https://tr.snapchat.com https://tr-shadow.snapchat.com https://badoo-api.arkoselabs.com https://*.sentry.io; child-src 'self' blob:; font-src * data:; manifest-src 'self'; base-uri 'self'; frame-src * bds: bdp:; img-src * data: blob:; media-src * data: blob:; report-uri /jss/csp_report.phtml?token=badoo_homepage&env=production; upgrade-insecure-requests;",
-    "deprecated_used": [
-      "child-src",
-      "report-uri"
-    ],
+    "deprecated_used": ["child-src", "report-uri"],
     "error": null,
     "policies": [
       {
@@ -16665,9 +16639,7 @@
     "requested_url": "engadget.com",
     "fetched_url": "https://engadget.com",
     "csp_raw": "sandbox allow-scripts; default-src 'self'; img-src https:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; report-uri https://csp.yahoo.com/beacon/csp?src=redirect",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -18711,10 +18683,7 @@
     "requested_url": "sabq.org",
     "fetched_url": "https://sabq.org",
     "csp_raw": "default-src data: 'unsafe-inline' 'unsafe-eval' https: http:;script-src data: 'unsafe-inline' 'unsafe-eval' https: http: blob:;style-src data: 'unsafe-inline' https: http: blob:;img-src data: https: http: blob:;font-src data: https: http:;connect-src https: wss: ws: http: blob:;media-src https: blob: http:;object-src https: http:;child-src https: data: blob: http:;form-action https: http:;frame-ancestors 'self' https://*.quintype.com https://sabq.org;block-all-mixed-content;",
-    "deprecated_used": [
-      "block-all-mixed-content",
-      "child-src"
-    ],
+    "deprecated_used": ["block-all-mixed-content", "child-src"],
     "error": null,
     "policies": [
       {
@@ -19066,9 +19035,7 @@
     "requested_url": "www.gov.uk",
     "fetched_url": "https://www.gov.uk",
     "csp_raw": "default-src 'self'; base-uri 'none'; img-src 'self' *.publishing.service.gov.uk www.gov.uk *.dev.gov.uk www.google-analytics.com ssl.google-analytics.com stats.g.doubleclick.net www.googletagmanager.com www.region1.google-analytics.com region1.google-analytics.com lux.speedcurve.com assets.digital.cabinet-office.gov.uk https://img.youtube.com https://i.ytimg.com; script-src 'self' www.google-analytics.com ssl.google-analytics.com stats.g.doubleclick.net www.googletagmanager.com www.region1.google-analytics.com region1.google-analytics.com www.gstatic.com *.ytimg.com www.youtube.com www.youtube-nocookie.com 'nonce-C6OnggVTDz6i4ezPTt1vKQ=='; style-src 'self' www.gstatic.com; font-src 'self'; connect-src 'self' *.publishing.service.gov.uk www.gov.uk *.dev.gov.uk www.google-analytics.com ssl.google-analytics.com stats.g.doubleclick.net www.googletagmanager.com www.region1.google-analytics.com region1.google-analytics.com lux.speedcurve.com gds-single-consent-staging.app gds-single-consent.app; object-src 'none'; frame-src 'self' *.publishing.service.gov.uk www.gov.uk *.dev.gov.uk www.youtube.com www.youtube-nocookie.com; frame-ancestors 'self' *.publishing.service.gov.uk www.gov.uk *.dev.gov.uk; report-uri https://csp-reporter.publishing.service.gov.uk/report",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -19768,10 +19735,7 @@
     "requested_url": "yandex.com.tr",
     "fetched_url": "https://yandex.com.tr",
     "csp_raw": "report-uri https://csp.yandex.net/csp?project=morda&from=morda.big.com.tr&showid=1761672231437020-2265159191166963506-balancer-l7leveler-kubr-yp-vla-71-BAL&h=home-mordago-prestable-web-backend-75.vla.yp-c.yandex.net&yandexuid=7669635061761672231&&version=2025-10-28-982.1&adb=0;media-src yastatic.net;connect-src *.strm.yandex.net mc.yandex.com yandex.com.tr wss://uniproxy.alice.yandex.net yabs.yandex.com.tr surveys.yandex.ru yastatic.net yastat.net mc.yandex.ru *.mc.yandex.ru adstat.yandex.ru mc.admetrica.ru yandexmetrica.com:* mc.yandex.md mc.yandex.com.tr *.yandex.net an.yandex.ru yandex.ru;img-src *.verify.yandex.ru *.ya.ru *.yandex.ru ya.ru yabs.yandex.by yabs.yandex.com.tr yabs.yandex.kz yabs.yandex.ru yabs.yandex.uz yandex.ru yandex.com.tr favicon.yandex.net yastatic.net avatars.mds.yandex.net blob: data: static-maps.yandex.ru 'self' mc.admetrica.ru mc.yandex.com *.mc.yandex.ru adstat.yandex.ru mc.yandex.com.tr mc.yandex.ru;script-src 'nonce-rZTcxqGwUqBLawOZ7KOdlg==' mc.yandex.com yastatic.net blob: yandex.com.tr surveys.yandex.ru mc.yandex.ru *.mc.yandex.ru adstat.yandex.ru mc.yandex.com.tr 'unsafe-eval';child-src *.ya.ru *.yandex.ru ya.ru yandex.ru yandex.com.tr blob: mc.yandex.ru mc.yandex.md mc.yandex.com.tr *.ya.ru *.yandex.ru ya.ru yandex.ru;style-src 'unsafe-inline' yastatic.net;object-src 'none';base-uri 'none';default-src 'self' yastatic.net yastat.net;font-src yastatic.net",
-    "deprecated_used": [
-      "child-src",
-      "report-uri"
-    ],
+    "deprecated_used": ["child-src", "report-uri"],
     "error": null,
     "policies": [
       {
@@ -20417,9 +20381,7 @@
     "requested_url": "zulily.com",
     "fetched_url": "https://zulily.com",
     "csp_raw": "block-all-mixed-content; frame-ancestors *; upgrade-insecure-requests;",
-    "deprecated_used": [
-      "block-all-mixed-content"
-    ],
+    "deprecated_used": ["block-all-mixed-content"],
     "error": null,
     "policies": [
       {
@@ -20453,9 +20415,7 @@
     "requested_url": "asana.com",
     "fetched_url": "https://asana.com",
     "csp_raw": "worker-src blob:; frame-ancestors 'self' https://www.surveymonkey.com https://google.com https://app.asana.com https://prod-eu1.app.asana.com https://prod-au1.app.asana.com https://prod-jp1.app.asana.com https://blog.asana.com https://academy.asana.com https://app.optimizely.com/; report-uri https://app.asana.com/-/csp_report; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/ https://ajax.aspnetcdn.com https://bat.bing.com https://sjs.bizographics.com https://ct.capterra.com https://googleads.g.doubleclick.net https://connect.facebook.net https://tracking.g2crowd.com https://www.google-analytics.com https://apis.google.com https://www.googleadservices.com https://*.googleapis.com https://tpc.googlesyndication.com https://www.googletagmanager.com https://ssl.gstatic.com https://cdn.jotfor.ms https://form.jotform.us https://snap.licdn.com https://px.ads.linkedin.com https://www.linkedin.com https://luna1.co https://js.recurly.com https://fast.wistia.com https://fast.wistia.net https://www.youtube.com https://s.ytimg.com https://*.marketo.com https://*.marketo.net https://cdnjs.cloudflare.com https://api.ipify.org https://cdn.pdst.fm https://*.vimeocdn.com https://resources.asana.com https://w58858w0sjxx.statuspage.io https://cdn.cookielaw.org https://geolocation.onetrust.com https://*.logs.datadoghq.com https://www.datadoghq-browser-agent.com https://tagmanager.google.com/debug https://t.contentsquare.net contentsquare.com app.contentsquare.com https://cdn.jsdelivr.net/npm/@sheerid/jslib@1/ https://v2.listenloop.com https://boards.greenhouse.io/embed/job_board/js https://job-boards.greenhouse.io https://www.redditstatic.com/ads/pixel.js https://yjtag.jp/tag.js https://s.yjtag.jp/tag.js https://s.yimg.jp/ https://yjtag.yahoo.co.jp/tag https://analytics.tiktok.com/i18n/pixel/ https://s.pinimg.com/ct/ https://b92.yahoo.co.jp/rt/ https://t-antenna.asana.com/ https://scripts.postie.com/wbgboxjj/lp.1.js https://b91.yahoo.co.jp/pagead/ https://b98.yahoo.co.jp/ https://accounts.google.com/gsi/client  https://js.adstk.io/convpixel.js https://a.quora.com/qevents.js https://d34r8q7sht0t9k.cloudfront.net/tag.js https://collector-39548.us.tvsquared.com/tv2track.js https://*.qualified.com https://static.xingcdn.com/xingtrk/index.js https://ct.pinterest.com/static/ct/token_create.js https://*.6sc.co https://*.6sense.com https://js.zi-scripts.com/ https://*.mountain.com/ https://c0.adalyser.com/adalyser.js https://dyv6f9ner1ir9.cloudfront.net/assets/js/nloader.js https://pagead2.googlesyndication.com https://c.amazon-adsystem.com/aat/amzn.js https://*.optimizely.com https://optimizely.s3.amazonaws.com https://tr.capterra.com https://pixel.byspotify.com/ping.min.js",
-    "deprecated_used": [
-      "report-uri"
-    ],
+    "deprecated_used": ["report-uri"],
     "error": null,
     "policies": [
       {
@@ -22693,10 +22653,7 @@
     "requested_url": "nydailynews.com",
     "fetched_url": "https://nydailynews.com",
     "csp_raw": "default-src data: 'unsafe-inline' 'unsafe-eval' https:; script-src data: 'unsafe-inline' 'unsafe-eval' https: blob: *.visualwebsiteoptimizer.com; style-src 'unsafe-inline' https: *.visualwebsiteoptimizer.com app.vwo.com; img-src data: https: blob: *.visualwebsiteoptimizer.com app.vwo.com useruploads.vwo.io; font-src data: https:; connect-src https: data: blob: *.visualwebsiteoptimizer.com app.vwo.com; media-src blob: data: https:; object-src https:; child-src https: data: blob: 'self' *.visualwebsiteoptimizer.com app.vwo.com; upgrade-insecure-requests; block-all-mixed-content;",
-    "deprecated_used": [
-      "block-all-mixed-content",
-      "child-src"
-    ],
+    "deprecated_used": ["block-all-mixed-content", "child-src"],
     "error": null,
     "policies": [
       {
@@ -23470,9 +23427,7 @@
     "requested_url": "techcrunch.com",
     "fetched_url": "https://techcrunch.com",
     "csp_raw": "default-src 'self' *.techcrunch.com; frame-ancestors 'self'; frame-src 'self' https: data:; style-src 'self' 'unsafe-inline' *; img-src 'self' * data:; connect-src 'self' https:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; worker-src 'self' blob:; media-src 'self' *.youtube.com *.jetpackdigital.com; font-src 'self' * data:; upgrade-insecure-requests; block-all-mixed-content; sandbox allow-forms allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox;",
-    "deprecated_used": [
-      "block-all-mixed-content"
-    ],
+    "deprecated_used": ["block-all-mixed-content"],
     "error": null,
     "policies": [
       {
@@ -23817,10 +23772,7 @@
     "requested_url": "duckduckgo.com",
     "fetched_url": "https://duckduckgo.com",
     "csp_raw": "default-src 'none' ; connect-src  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; manifest-src  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; media-src  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; script-src blob:  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com 'unsafe-inline' 'unsafe-eval' ; font-src data:  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; img-src data:  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; style-src  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com 'unsafe-inline' ; object-src 'none' ; worker-src blob: ; child-src blob:  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; frame-src blob:  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; form-action  https://duck.ai https://*.duck.ai https://duckduckgo.com https://*.duckduckgo.com https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/ https://spreadprivacy.com ; frame-ancestors 'self' https://html.duckduckgo.com; base-uri 'self' ; block-all-mixed-content ;",
-    "deprecated_used": [
-      "block-all-mixed-content",
-      "child-src"
-    ],
+    "deprecated_used": ["block-all-mixed-content", "child-src"],
     "error": null,
     "policies": [
       {
@@ -24612,9 +24564,7 @@
     "requested_url": "cbssports.com",
     "fetched_url": "https://cbssports.com",
     "csp_raw": "frame-ancestors 'self' *.cbssports.com *.sportsline.com popculture.com comicbook.com 247sports.com *.247sports.com *.maxpreps.com *.ampproject.org; default-src https: blob: wss: 'unsafe-inline' 'unsafe-eval'; font-src https: blob: data:; media-src https: blob: data:; img-src https: blob: data: android-webview: android-webview-video-poster:; object-src 'none'; block-all-mixed-content;",
-    "deprecated_used": [
-      "block-all-mixed-content"
-    ],
+    "deprecated_used": ["block-all-mixed-content"],
     "error": null,
     "policies": [
       {
@@ -25628,9 +25578,7 @@
     "requested_url": "vnexpress.net",
     "fetched_url": "https://vnexpress.net",
     "csp_raw": "upgrade-insecure-requests; default-src data: 'unsafe-inline' 'unsafe-eval' https:; script-src data: 'unsafe-inline' 'unsafe-eval' https: blob: https://www.googleanalytics.com https://www.google-analytics.com https://www.googleoptimize.com https://optimize.google.com ; style-src data: 'unsafe-inline' https: https://optimize.google.com https://fonts.googleapis.com; img-src data: https: blob: android-webview-video-poster: https://www.google-analytics.com https://www.googletagmanager.com https://optimize.google.com; font-src data: https: https://fonts.gstatic.com; connect-src https: wss: blob:; media-src data: https: blob:; object-src https:; child-src https: data: blob:; form-action https:; frame-ancestors https://*.vnexpress.net https://vnexpress.net",
-    "deprecated_used": [
-      "child-src"
-    ],
+    "deprecated_used": ["child-src"],
     "error": null,
     "policies": [
       {
@@ -26216,9 +26164,7 @@
     "requested_url": "fandango.com",
     "fetched_url": "https://fandango.com",
     "csp_raw": "upgrade-insecure-requests; block-all-mixed-content",
-    "deprecated_used": [
-      "block-all-mixed-content"
-    ],
+    "deprecated_used": ["block-all-mixed-content"],
     "error": null,
     "policies": [
       {
@@ -26294,10 +26240,7 @@
     "requested_url": "divar.ir",
     "fetched_url": "https://divar.ir",
     "csp_raw": "default-src 'self';media-src 'self' https://*.divarcdn.com https://api.arcaptcha.ir blob: https://rcaptcha.ir;script-src 'self' https://*.divarcdn.com 'unsafe-eval' 'unsafe-inline' https://www.clarity.ms https://google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.googleadservices.com https://www.gstatic.com https://*.arcaptcha.ir https://*.arcaptcha.co https://*.rcaptcha.ir https://rcaptcha.ir https://*.doubleclick.net https://touch.radif.ai;worker-src 'self' https://www.gstatic.com blob:;style-src 'self' 'unsafe-inline' https://*.divarcdn.com https://fonts.googleapis.com https://*.arcaptcha.ir https://*.rcaptcha.ir https://rcaptcha.ir;img-src 'self' data: blob: https://*.divarcdn.com https://a-banners.divar.ir https://trustseal.enamad.ir https://google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://*.openstreetmap.org https://*.balad.ir https://www.google.com https://www.google.nl https://www.google.de https://www.google.ae https://www.google.fr https://www.google.ca https://www.google.bh https://www.google.com.bh https://www.google.co.uk https://www.google.com.au https://logo.samandehi.ir https://map.divar.ir https://*.clarity.ms https://c.bing.com https://*.arcaptcha.ir https://*.arcaptcha.co https://*.rcaptcha.ir https://rcaptcha.ir https://api.divar.ir;connect-src 'self' https://*.divar.ir https://*.divarcdn.com https://google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://www.google.com https://www.googleadservices.com https://*.doubleclick.net https://*.googleapis.com https://sentry.divar.cloud wss://submit-warning.divar.ir https://tiles.raah.ir https://*.clarity.ms https://c.bing.com https://*.arcaptcha.ir https://*.arcaptcha.co https://*.rcaptcha.ir https://rcaptcha.ir https://api-divar.neshan.org https://touch.radif.ai https://ap.api.fpjs.io;font-src 'self' https://*.divarcdn.com https://fonts.gstatic.com https://*.arcaptcha.ir https://*.rcaptcha.ir https://rcaptcha.ir data:;object-src 'none';frame-ancestors 'none';base-uri 'self';frame-src 'self' https://*.doubleclick.net;child-src 'self' blob:;manifest-src 'self';upgrade-insecure-requests;block-all-mixed-content",
-    "deprecated_used": [
-      "block-all-mixed-content",
-      "child-src"
-    ],
+    "deprecated_used": ["block-all-mixed-content", "child-src"],
     "error": null,
     "policies": [
       {

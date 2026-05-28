@@ -1,18 +1,12 @@
 [project]
 name = "csp-check"
-version = "0.3.0"
+version = "0.3.1"
 description = "A Content-Security-Policy inspector with rich output, file export, and directive analysis."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "syss-internal" }
-authors = [
-  { name = "Henry Weckermann", email = "henry.weckermann@syss.de" }
-]
-dependencies = [
-  "requests>=2.31.0",
-  "tldextract>=5.1.0",
-  "rich>=13.7.0"
-]
+authors = [{ name = "Henry Weckermann", email = "henry.weckermann@syss.de" }]
+dependencies = ["requests>=2.31.0", "tldextract>=5.1.0", "rich>=13.7.0"]
 
 [project.scripts]
 csp-check = "csp_check.csp_check:main"
@@ -26,7 +20,4 @@ packages = ["csp_check"]
 include-package-data = true
 
 [dependency-groups]
-dev = [
-    "mypy>=1.15.0",
-    "ruff>=0.9.5",
-]
+dev = ["mypy>=1.15.0", "ruff>=0.9.5"]

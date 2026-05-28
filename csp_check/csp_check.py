@@ -1508,6 +1508,20 @@ def parse_cookies(cookie_str: Optional[str]) -> Dict[str, str]:
     return jar
 
 
+def parse_headers(header_str: Optional[str]) -> Dict[str, str]:
+    if not header_str:
+        return {}
+    hdrs: Dict[str, str] = {}
+    for h in header_str.split(";"):
+        h = h.strip()
+        if not h:
+            continue
+        if ":" in h:
+            k, v = h.split(":", 1)
+            hdrs[k.strip()] = v.strip()
+    return hdrs
+
+
 def is_wildcard_token(token: str) -> bool:
     if token == "*":
         return True
@@ -1786,6 +1800,7 @@ async def fetch_csp(
     url: str,
     *,
     cookies: Dict[str, str],
+    headers: Dict[str, str] = {},
     proxies: Dict = {},
     is_secure: bool = True,
     redirect: bool = False,
@@ -1801,7 +1816,7 @@ async def fetch_csp(
     if owns_client:
         mounts = build_proxy_mounts(proxies)
         client_kwargs: dict = dict(
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": USER_AGENT, **headers},
             cookies=cookies or {},
             verify=is_secure,
             follow_redirects=redirect,
@@ -1857,6 +1872,7 @@ async def fetch_multiple_csps(
     urls: Sequence[str],
     *,
     cookies: Dict[str, str],
+    headers: Dict[str, str] = {},
     proxies: Dict = {},
     is_secure: bool = True,
     redirect: bool = False,
@@ -1867,7 +1883,7 @@ async def fetch_multiple_csps(
     sem = asyncio.Semaphore(concurrency)
     mounts = build_proxy_mounts(proxies)
     client_kwargs: dict = dict(
-        headers={"User-Agent": USER_AGENT},
+        headers={"User-Agent": USER_AGENT, **headers},
         cookies=cookies or {},
         verify=is_secure,
         follow_redirects=redirect,
@@ -1883,6 +1899,7 @@ async def fetch_multiple_csps(
                 return await fetch_csp(
                     u,
                     cookies=cookies,
+                    headers=headers,
                     proxies=proxies,
                     is_secure=is_secure,
                     redirect=redirect,
@@ -2423,6 +2440,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p.add_argument("-c", "--cookies", help="Semicolon-separated cookies: 'a=b; c=d'", default=None)
     p.add_argument(
+        "-H", "--headers", help="Semicolon-separated headers: 'X-Token: abc; Accept: text/html'", default=None
+    )
+    p.add_argument(
         "-o",
         "--output",
         help="Write results to this file. If omitted, prints to console (unless --format=latex).",
@@ -2482,6 +2502,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_arg_parser().parse_args()
     cookies = parse_cookies(args.cookies)
+    extra_headers = parse_headers(args.headers)
 
     if args.csp:
         csp_text = read_csp_with_rich()
@@ -2515,6 +2536,7 @@ def main() -> int:
         fetch_multiple_csps(
             urls,
             cookies=cookies,
+            headers=extra_headers,
             proxies=proxies,
             is_secure=args.insecure,
             redirect=args.redirect,

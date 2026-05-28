@@ -45,7 +45,7 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "manifest-src": {"text": "Valid sources for web app manifests.", "color": "white"},
     "media-src": {"text": "Valid sources for audio/video/track.", "color": "white"},
     "object-src": {"text": "Valid sources for <object>/<embed>.", "color": "white"},
-    "prefetch-src": {"text": "Valid sources to prefetch/prerender.", "color": "white"},
+    # "prefetch-src": {"text": "Valid sources to prefetch/prerender.", "color": "white"},
     "script-src": {"text": "Valid sources for JavaScript.", "color": "white"},
     "style-src": {"text": "Valid sources for stylesheets.", "color": "white"},
     "webrtc-src": {"text": "Valid sources for WebRTC.", "color": "white"},
@@ -60,7 +60,7 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "frame-ancestors": {"text": "Valid parents that may embed the page.", "color": "white"},
     "navigate-to": {"text": "Restricts where a document can navigate.", "color": "white"},
     # Reporting
-    "report-uri": {"text": "Legacy violation report endpoint (prefer report-to).", "color": "yellow"},
+    # "report-uri": {"text": "Legacy violation report endpoint (prefer report-to).", "color": "yellow"},
     "report-to": {"text": "Reporting API group for CSP violations.", "color": "white"},
     # Other directives
     "block-all-mixed-content": {"text": "Disallow HTTP on HTTPS pages (legacy-ish).", "color": "yellow"},
@@ -79,15 +79,7 @@ T_HELP: Dict[str, Dict[str, str]] = {
     "'sha256-'": {"text": "Allow inline script/style matching the hash.", "color": "green"},
 }
 
-DEPRECATED_OR_LEGACY = {
-    "referrer",
-    "child-src",
-    "plugin-types",
-    "report-uri",
-    "disown-opener",
-    "block-all-mixed-content",
-    "reflected-xss",
-}
+DEPRECATED_OR_LEGACY = {"plugin-types", "disown-opener", "block-all-mixed-content", "prefetch-src"}
 
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {

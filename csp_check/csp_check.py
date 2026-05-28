@@ -1430,6 +1430,7 @@ class URLResult:
     deprecated_used: List[str] = field(default_factory=list)
     warnings: Dict[str, object] = field(default_factory=dict)
     bypass_findings: List[BypassFinding] = field(default_factory=list)
+    report_only: bool = False
     error: Optional[str] = None
 
 
@@ -1828,12 +1829,22 @@ async def fetch_csp(
         if not csp_header:
             csp_header = resp.headers.get("X-Content-Security-Policy")
 
+        report_only_header = resp.headers.get("Content-Security-Policy-Report-Only")
+
         if not csp_header:
             csp_from_meta = extract_csp_from_html_head(resp.text)
             if csp_from_meta:
                 csp_header = csp_from_meta
 
-        return parse_csp(csp_header, url, requested_url)
+        if not csp_header and report_only_header:
+            result = parse_csp(report_only_header, url, requested_url)
+            result.report_only = True
+            return result
+
+        result = parse_csp(csp_header, url, requested_url)
+        if report_only_header:
+            result.warnings["has_report_only_too"] = True
+        return result
 
     except Exception as e:
         return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
@@ -1899,7 +1910,8 @@ class TextRenderer(BaseRenderer):
 
     def print_to_console(self, results: List[URLResult]) -> None:
         for res in results:
-            header = Text.from_markup(f"[bold]{res.requested_url}[/bold] — Fetched: [cyan]{res.url}[/cyan]")
+            ro_badge = " [yellow](report-only)[/yellow]" if res.report_only else ""
+            header = Text.from_markup(f"[bold]{res.requested_url}[/bold] — Fetched: [cyan]{res.url}[/cyan]{ro_badge}")
             self.console.print(Panel(header, expand=False, box=box.ROUNDED))  # type: ignore
 
             if res.error:
@@ -1908,6 +1920,12 @@ class TextRenderer(BaseRenderer):
                 continue
 
             warn_lines = []
+            if res.report_only:
+                warn_lines.append(
+                    "[yellow]This is a [bold]report-only[/bold] CSP — violations are reported but not enforced.[/yellow]"
+                )
+            if res.warnings.get("has_report_only_too"):
+                warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
             if res.warnings.get("deprecated_directives"):
                 warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))  # type: ignore
             if res.warnings.get("unsafe_inline"):
@@ -1941,7 +1959,7 @@ class TextRenderer(BaseRenderer):
                 )
 
             table = Table(
-                title="Content-Security-Policy",
+                title="Content-Security-Policy" + (" (report-only)" if res.report_only else ""),
                 show_header=True,
                 header_style="bold",
                 box=box.SIMPLE_HEAVY,
@@ -1998,12 +2016,20 @@ class TextRenderer(BaseRenderer):
         lines: List[str] = []
         for res in results:
             lines.append("=" * 78)
-            lines.append(f"{res.requested_url}  (fetched: {res.url})")
+            ro_note = "  [REPORT-ONLY]" if res.report_only else ""
+            lines.append(f"{res.requested_url}  (fetched: {res.url}){ro_note}")
             lines.append("=" * 78)
             if res.error:
                 lines.append(f"Error: {res.error}")
                 lines.append("")
                 continue
+
+            if res.report_only:
+                lines.append("NOTE: This is a report-only CSP — violations are reported but not enforced.")
+                lines.append("")
+            if res.warnings.get("has_report_only_too"):
+                lines.append("NOTE: A Content-Security-Policy-Report-Only header is also present.")
+                lines.append("")
 
             if res.deprecated_used:
                 lines.append("Deprecated/legacy directives present: " + ", ".join(res.deprecated_used))
@@ -2082,6 +2108,7 @@ class JsonRenderer(BaseRenderer):
                 "fetched_url": r.url,
                 "csp_raw": r.csp_raw,
                 "deprecated_used": r.deprecated_used,
+                "report_only": r.report_only,
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
                 "bypass_findings": [bypass_to_dict(bf) for bf in r.bypass_findings],

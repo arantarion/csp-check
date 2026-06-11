@@ -2573,7 +2573,9 @@ class LatexRenderer(BaseRenderer):
         if orphans:
             sections.append(one_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
         if deprecated:
-            sections.append(one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated))))
+            sections.append(
+                one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))
+            )
 
         return "\n\n".join(sections)
 

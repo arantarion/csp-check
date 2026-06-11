@@ -1,6 +1,6 @@
 [project]
 name = "csp-check"
-version = "0.5.0"
+version = "0.5.1"
 description = "A Content-Security-Policy inspector with rich output, file export, and directive analysis."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -7,22 +7,28 @@
 #     "rich",
 #     "tldextract",
 #     "httpx",
+#     "dnspython",
 # ]
 # ///
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import re
+import socket
 import sys
 import urllib.parse
 
 import click
+import tldextract
 from dataclasses import dataclass, field
+from enum import Enum
+from functools import partial
 from html.parser import HTMLParser
 from string import Template
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Set
 
 import httpx
 from rich import box
@@ -30,6 +36,22 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+try:
+    from dns import resolver as _dns_resolver
+    from dns.resolver import NXDOMAIN, NoAnswer, NoNameservers
+
+    HAVE_DNSPY = True
+except Exception:
+    HAVE_DNSPY = False
+
+try:
+    from whois import whois as _whois_lookup  # type: ignore[import-not-found]
+    from whois.parser import PywhoisError  # type: ignore[import-not-found]
+
+    HAVE_WHOIS = True
+except Exception:
+    HAVE_WHOIS = False
 
 # ---------------------------------------
 # Knowledge base
@@ -1403,6 +1425,9 @@ class SourceItem:
     note: Optional[str] = None
     color: str = "white"
     is_bypass: bool = False
+    is_orphan: bool = False
+    orphan_status: Optional[str] = None
+    is_missing_https: bool = False
 
 
 @dataclass
@@ -1423,6 +1448,15 @@ class BypassFinding:
 
 
 @dataclass
+class OrphanFinding:
+    directive: str
+    source_raw: str
+    host: str
+    fld: str
+    status: str
+
+
+@dataclass
 class URLResult:
     url: str
     requested_url: str
@@ -1431,6 +1465,7 @@ class URLResult:
     deprecated_used: List[str] = field(default_factory=list)
     warnings: Dict[str, object] = field(default_factory=dict)
     bypass_findings: List[BypassFinding] = field(default_factory=list)
+    orphan_findings: List[OrphanFinding] = field(default_factory=list)
     report_only: bool = False
     error: Optional[str] = None
 
@@ -1630,33 +1665,55 @@ def pretty_csp(csp_raw: str) -> str:
 
 def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
     """
-    Surround matching problem items in the pretty-printed CSP with
+    Surround problematic source tokens in the pretty-printed CSP with
     §R[...]R§ markers for LaTeX highlighting.
+
+    Decisions are made per whole token (never via substring replacement) so
+    that markers cannot nest and a token is never matched inside a longer one
+    (e.g. ``crazygames.com`` inside ``crazygames.com.br``).
     """
-    problem_items = set()
+    wrap_exact = set()
     if res.warnings.get("unsafe_inline"):
-        problem_items.add("'unsafe-inline'")
+        wrap_exact.add("'unsafe-inline'")
     if res.warnings.get("unsafe_eval"):
-        problem_items.add("'unsafe-eval'")
+        wrap_exact.add("'unsafe-eval'")
     if res.warnings.get("data_or_blob"):
-        problem_items.update({"data:", "blob:"})
-    if res.warnings.get("missing_https_and_upgrade"):
-        for token in csp_pretty.replace(";", " ").split():
-            if token.startswith("http://"):
-                problem_items.add(token)
-            if is_host(token):
-                problem_items.add(token)
+        wrap_exact.update({"data:", "blob:"})
 
-    if res.warnings.get("wildcard_sources"):
-        for token in csp_pretty.replace(";", " ").split():
-            if "*" in token:
-                problem_items.add(token)
+    flag_http = bool(res.warnings.get("missing_https_and_upgrade"))
+    flag_wildcard = bool(res.warnings.get("wildcard_sources"))
 
-    highlighted = csp_pretty
-    for item in sorted(problem_items, key=len, reverse=True):
-        highlighted = highlighted.replace(item, f"§R[{item}]R§")
+    def needs_wrap(bare: str) -> bool:
+        if not bare:
+            return False
+        if bare in wrap_exact:
+            return True
+        if flag_wildcard and "*" in bare:
+            return True
+        if flag_http and (bare.startswith("http://") or is_host(bare)):
+            return True
+        return False
 
-    return highlighted
+    out_lines: List[str] = []
+    for line in csp_pretty.split("\n"):
+        tokens = line.split()
+        new_tokens: List[str] = []
+        for idx, tok in enumerate(tokens):
+            # The first token of a directive line is the directive name, never
+            # a source value — leave it untouched.
+            if idx == 0:
+                new_tokens.append(tok)
+                continue
+            # Peel a trailing ';' directive terminator off before matching so
+            # it stays outside the marker.
+            bare, suffix = (tok[:-1], ";") if tok.endswith(";") else (tok, "")
+            if needs_wrap(bare):
+                new_tokens.append(f"§R[{bare}]R§{suffix}")
+            else:
+                new_tokens.append(tok)
+        out_lines.append(" ".join(new_tokens))
+
+    return "\n".join(out_lines)
 
 
 def parse_csp(
@@ -1785,6 +1842,15 @@ def parse_csp(
         "bypass_domains": bool(bypass_findings),
     }
 
+    # When the whole policy relies on http-capable host sources without pinning
+    # https (and without upgrade-insecure-requests), flag each affected plain
+    # host so the renderers can mark it. Wildcards already carry their own flag.
+    if warnings_dict["missing_https_and_upgrade"]:
+        for pol in policies:
+            for it in pol.items:
+                if is_host(it.raw) and not is_wildcard_token(it.raw):
+                    it.is_missing_https = True
+
     return URLResult(
         url=url,
         requested_url=requested_url,
@@ -1795,6 +1861,187 @@ def parse_csp(
         bypass_findings=bypass_findings,
         error=None,
     )
+
+
+# ---------------------------------------
+# Orphan / dangling domain detection
+# ---------------------------------------
+
+
+class DomainStatus(str, Enum):
+    EXISTS = "exists"
+    NXDOMAIN = "nxdomain"
+    NOTREGISTERED = "notregistered"
+    NOANSWER = "noanswer"
+    NONS = "nonameservers"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+ORPHAN_STATUSES = (DomainStatus.NXDOMAIN, DomainStatus.NOTREGISTERED, DomainStatus.NONS)
+
+_HOST_QUOTE_RE = re.compile(r"^'+|'+$")
+
+
+def extract_host_from_source(item: str) -> Optional[str]:
+    """Extract a bare hostname from a CSP source token, or None for keywords,
+    schemes, nonces, hashes and other non-host expressions."""
+    if not item:
+        return None
+    raw = _HOST_QUOTE_RE.sub("", item.strip())
+    raw_low = raw.lower()
+
+    if raw_low in {"*", "self", "none", "unsafe-inline", "unsafe-eval", "strict-dynamic", "report-sample"}:
+        return None
+    if raw_low.endswith(":"):
+        return None
+    if raw_low.startswith(("data:", "blob:", "filesystem:", "mediastream:", "ws:", "wss:")):
+        return None
+    if raw_low.startswith(("nonce-", "sha256-", "sha384-", "sha512-")):
+        return None
+
+    if raw.startswith("*."):
+        raw = raw[2:]
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    host = raw.split("/", 1)[0]
+    host = host.split("@")[-1]
+    host = host.split(":", 1)[0]
+    return host.lower() if host else None
+
+
+def to_fld(host: str) -> Optional[str]:
+    """Return the registrable (first-level) domain for a host, or None when the
+    host has no public suffix (IPs, localhost, intranet names)."""
+    if not host:
+        return None
+    te = tldextract.extract(host)
+    if not te.domain or not te.suffix:
+        return None
+    return f"{te.domain}.{te.suffix}"
+
+
+def _resolve_domain_status_sync(
+    domain: str, dns_resolvers: Optional[List[str]] = None, dns_timeout: float = 3.0
+) -> DomainStatus:
+    if not domain:
+        return DomainStatus.UNKNOWN
+
+    if not HAVE_DNSPY:
+        try:
+            socket.getaddrinfo(domain, 80)
+            return DomainStatus.EXISTS
+        except socket.gaierror:
+            return DomainStatus.NXDOMAIN
+        except Exception:
+            return DomainStatus.OTHER
+
+    r = _dns_resolver.Resolver()
+    if dns_resolvers:
+        r.nameservers = dns_resolvers
+    r.lifetime = dns_timeout
+    r.timeout = dns_timeout
+
+    def _lookup() -> DomainStatus:
+        for rtype in ("A", "AAAA"):
+            try:
+                r.resolve(domain, rtype)
+                return DomainStatus.EXISTS
+            except NXDOMAIN:
+                return DomainStatus.NXDOMAIN
+            except NoNameservers:
+                return DomainStatus.NONS
+            except NoAnswer:
+                continue
+            except Exception:
+                continue
+        return DomainStatus.NOANSWER
+
+    status = _lookup()
+
+    if status in (DomainStatus.NXDOMAIN, DomainStatus.NONS) and HAVE_WHOIS:
+        try:
+            _whois_lookup(domain)
+        except PywhoisError:
+            status = DomainStatus.NOTREGISTERED
+        except Exception:
+            pass
+
+    return status
+
+
+async def build_domain_health_map(
+    domains: Set[str], dns_resolvers: Optional[List[str]] = None, concurrency: int = 50, dns_timeout: float = 3.0
+) -> Dict[str, DomainStatus]:
+    results: Dict[str, DomainStatus] = {}
+    if not domains:
+        return results
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(concurrency)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+
+        async def task(d: str):
+            async with sem:
+                func = partial(_resolve_domain_status_sync, d, dns_resolvers, dns_timeout)
+                results[d] = await loop.run_in_executor(pool, func)
+
+        await asyncio.gather(*(task(d) for d in domains))
+    return results
+
+
+async def annotate_orphans(
+    results: List[URLResult],
+    *,
+    dns_resolvers: Optional[List[str]] = None,
+    concurrency: int = 50,
+    dns_timeout: float = 3.0,
+) -> None:
+    """Resolve every registrable domain referenced across all results once, then
+    mark the source items whose domain is orphaned (claimable) in place."""
+    flds: Set[str] = set()
+    for res in results:
+        if res.error or not res.csp_raw:
+            continue
+        for p in res.policies:
+            for it in p.items:
+                host = extract_host_from_source(it.raw)
+                fld = to_fld(host) if host else None
+                if fld:
+                    flds.add(fld)
+
+    if not flds:
+        return
+
+    health = await build_domain_health_map(
+        flds, dns_resolvers=dns_resolvers, concurrency=concurrency, dns_timeout=dns_timeout
+    )
+    orphan_flds = {f for f, s in health.items() if s in ORPHAN_STATUSES}
+    if not orphan_flds:
+        return
+
+    for res in results:
+        if res.error or not res.csp_raw:
+            continue
+        seen: Set = set()
+        for p in res.policies:
+            for it in p.items:
+                host = extract_host_from_source(it.raw)
+                if not host:
+                    continue
+                fld = to_fld(host)
+                if not fld or fld not in orphan_flds:
+                    continue
+                status = health[fld].value
+                it.is_orphan = True
+                it.orphan_status = status
+                key = (p.name, it.raw, fld)
+                if key not in seen:
+                    seen.add(key)
+                    res.orphan_findings.append(
+                        OrphanFinding(directive=p.name, source_raw=it.raw, host=host, fld=fld, status=status)
+                    )
+        if res.orphan_findings:
+            res.warnings["orphan_domains"] = True
 
 
 async def fetch_csp(
@@ -1965,6 +2212,12 @@ class TextRenderer(BaseRenderer):
                     f"[bright_red bold]CSP bypass possible![/bright_red bold] "
                     f"[bright_red]{len(res.bypass_findings)} known bypassable source(s) — see Bypass Findings below.[/bright_red]"
                 )
+            if res.warnings.get("orphan_domains"):
+                warn_lines.append(
+                    f"[magenta bold]Orphaned domain(s) detected![/magenta bold] "
+                    f"[magenta]{len(res.orphan_findings)} allowlisted source(s) point to unregistered/dangling "
+                    f"domains an attacker could claim (likely typos) — see Orphan Domains below.[/magenta]"
+                )
 
             if warn_lines:
                 self.console.print(  # type: ignore
@@ -2000,8 +2253,11 @@ class TextRenderer(BaseRenderer):
                 first = True
                 for it in p.items:
                     expl = f" [dim]— {it.note}[/dim]" if it.note else ""
+                    https_mark = " [dim](missing https)[/dim]" if it.is_missing_https else ""
                     bypass_mark = " [bright_red bold][BYPASS][/bright_red bold]" if it.is_bypass else ""
-                    value = f"[{it.color}]{it.raw}[/{it.color}]{expl}{bypass_mark}"
+                    orphan_mark = f" [magenta bold][ORPHAN: {it.orphan_status}][/magenta bold]" if it.is_orphan else ""
+                    item_color = "magenta" if it.is_orphan and not it.is_bypass else it.color
+                    value = f"[{item_color}]{it.raw}[/{item_color}]{https_mark}{expl}{bypass_mark}{orphan_mark}"
                     table.add_row(directive_label if first else "", value)
                     first = False
 
@@ -2024,6 +2280,23 @@ class TextRenderer(BaseRenderer):
                         "\n".join(bypass_lines),
                         title="[bright_red bold]Bypass Findings[/bright_red bold]",
                         border_style="bright_red",
+                        box=box.ROUNDED,
+                    )
+                )
+
+            if res.orphan_findings:
+                orphan_lines = []
+                for of in res.orphan_findings:
+                    orphan_lines.append(
+                        f"[bold]{of.directive}[/bold]: [magenta]{of.source_raw}[/magenta] "
+                        f"→ registrable domain [yellow]{of.fld}[/yellow] is [magenta]{of.status}[/magenta] "
+                        f"(claimable by an attacker)"
+                    )
+                self.console.print(  # type: ignore
+                    Panel(
+                        "\n".join(orphan_lines),
+                        title="[magenta bold]Orphan Domains[/magenta bold]",
+                        border_style="magenta",
                         box=box.ROUNDED,
                     )
                 )
@@ -2072,8 +2345,10 @@ class TextRenderer(BaseRenderer):
 
                 for it in p.items:
                     expl = f" — {it.note}" if it.note else ""
+                    https_mark = " (missing https)" if it.is_missing_https else ""
                     bypass_mark = " [BYPASS]" if it.is_bypass else ""
-                    lines.append(f"  + {it.raw}{expl}{bypass_mark}")
+                    orphan_mark = f" [ORPHAN: {it.orphan_status}]" if it.is_orphan else ""
+                    lines.append(f"  + {it.raw}{https_mark}{expl}{bypass_mark}{orphan_mark}")
                 lines.append("")
 
             if res.bypass_findings:
@@ -2086,6 +2361,12 @@ class TextRenderer(BaseRenderer):
                     for i, poc in enumerate(bf.pocs, 1):
                         label = f"    PoC{i if len(bf.pocs) > 1 else ''}: "
                         lines.append(f"{label}{poc}")
+                lines.append("")
+
+            if res.orphan_findings:
+                lines.append("--- ORPHAN DOMAINS (claimable by an attacker) ---")
+                for of in res.orphan_findings:
+                    lines.append(f"  {of.directive}: {of.source_raw} -> registrable domain {of.fld} ({of.status})")
                 lines.append("")
 
             lines.append("")
@@ -2106,6 +2387,9 @@ class JsonRenderer(BaseRenderer):
                         "note": i.note,
                         "color": i.color,
                         "is_bypass": i.is_bypass,
+                        "is_orphan": i.is_orphan,
+                        "orphan_status": i.orphan_status,
+                        "is_missing_https": i.is_missing_https,
                     }
                     for i in p.items
                 ],
@@ -2120,6 +2404,15 @@ class JsonRenderer(BaseRenderer):
                 "pocs": bf.pocs,
             }
 
+        def orphan_to_dict(of: OrphanFinding) -> Dict:
+            return {
+                "directive": of.directive,
+                "source_raw": of.source_raw,
+                "host": of.host,
+                "fld": of.fld,
+                "status": of.status,
+            }
+
         payload = [
             {
                 "requested_url": r.requested_url,
@@ -2130,6 +2423,7 @@ class JsonRenderer(BaseRenderer):
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
                 "bypass_findings": [bypass_to_dict(bf) for bf in r.bypass_findings],
+                "orphan_findings": [orphan_to_dict(of) for of in r.orphan_findings],
                 "policies": [policy_to_dict(p) for p in r.policies],
             }
             for r in results
@@ -2163,11 +2457,125 @@ class LatexRenderer(BaseRenderer):
         if res.warnings.get("missing_https_and_upgrade"):
             problems.append("no-https")
 
-        if res.warnings.get("bypass_domains"):
-            problems.append("bypass")
+        # if res.warnings.get("bypass_domains"):
+        #     problems.append("bypass")
 
-        order = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "bypass", "no-report"]
+        order = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
         return [p for p in order if p in problems]
+
+    def _findings_comment(self, results: List[URLResult]) -> str:
+        """Build a LaTeX comment block listing the bypassable and orphaned
+        domains found across all results. Returns '' when there is nothing to
+        report so no stray comment is emitted."""
+        bypass_rows: List[str] = []
+        orphan_rows: List[str] = []
+        multi = len(results) > 1
+
+        for res in results:
+            prefix = f"{res.requested_url}: " if multi else ""
+            for bf in res.bypass_findings:
+                risks = ", ".join(bf.risks) if bf.risks else "—"
+                bypass_rows.append(f"%   {prefix}{bf.directive} {bf.source_raw} -> {bf.bypass_domain} (risks: {risks})")
+            for of in res.orphan_findings:
+                orphan_rows.append(f"%   {prefix}{of.directive} {of.source_raw} -> {of.fld} ({of.status})")
+
+        if not bypass_rows and not orphan_rows:
+            return ""
+
+        sep = "% " + "-" * 73
+        lines = [
+            sep,
+            "% csp-check findings summary (auto-generated) — review before delivery",
+            sep,
+            "% Known CSP-bypass domains (script gadgets / JSONP endpoints):",
+        ]
+        lines.extend(bypass_rows or ["%   (none found)"])
+        lines.append("%")
+        lines.append("% Orphaned / dangling domains (unregistered, attacker-claimable; often typos):")
+        lines.extend(orphan_rows or ["%   (none found)"])
+        lines.append(sep)
+        return "\n".join(lines)
+
+    def _extra_sections(self, results: List[URLResult]) -> str:
+        """Prose paragraphs (DE/EN) explaining the problem classes that have no
+        dedicated `probleme=` group in the template — known bypasses, orphaned
+        domains and deprecated directives — emitted only when relevant. The
+        concrete affected entries are injected into the text."""
+        de = self.lang == "de"
+
+        def tt(items: List[str]) -> str:
+            return ", ".join(rf"\texttt{{{i}}}" for i in items)
+
+        bypasses = sorted({bf.bypass_domain for r in results for bf in r.bypass_findings})
+        orphans = sorted({of.fld for r in results for of in r.orphan_findings})
+        deprecated = sorted({d for r in results for d in r.deprecated_used})
+
+        de_bypass = Template(
+            r"Einige der in der CSP erlaubten Quellen ($BYPASS) sind dafür bekannt, dass sich über sie die "
+            r"Schutzwirkung der Content Security Policy umgehen lässt. Auf diesen Domains werden Endpunkte wie "
+            r"JSONP-Schnittstellen oder sogenannte \enquote{Script Gadgets} bereitgestellt, mit denen sich trotz "
+            r"aktiver CSP beliebiger JavaScript-Code zur Ausführung bringen lässt. Ist eine solche Domain als "
+            r"Skriptquelle zugelassen, kann ein Angreifer die CSP im Rahmen eines Cross-Site-Scripting-Angriffs "
+            r"umgehen und Schadcode ausführen. Es wird empfohlen, die betroffenen Quellen zu entfernen oder, sofern "
+            r"sie zwingend benötigt werden, so restriktiv wie möglich einzuschränken."
+        )
+        en_bypass = Template(
+            r"Some of the sources allowed by the CSP ($BYPASS) are known to allow the protection of the Content "
+            r"Security Policy to be bypassed. These domains host endpoints such as JSONP interfaces or so-called "
+            r"\enquote{script gadgets} that can be abused to execute arbitrary JavaScript code despite an active "
+            r"CSP. If such a domain is permitted as a script source, an attacker can circumvent the CSP in the "
+            r"context of a cross-site scripting attack and execute malicious code. It is recommended to remove the "
+            r"affected sources or, if they are strictly required, to restrict them as much as possible."
+        )
+        de_orphan = Template(
+            r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, deren registrierbare Domains ($ORPHAN) "
+            r"zum Zeitpunkt der Untersuchung nicht registriert waren bzw. nicht über das DNS aufgelöst werden "
+            r"konnten. In vielen Fällen handelt es sich dabei um Tippfehler oder um Domains von Diensten, die nicht "
+            r"mehr verwendet werden. Da solche Domains frei registriert werden können, könnte ein Angreifer sie auf "
+            r"sich registrieren und anschließend Inhalte aus einer Quelle ausliefern, "
+            r"der die CSP bereits vertraut. Auf diese Weise ließe sich die Schutzwirkung der CSP aushebeln. Es wird "
+            r"empfohlen, nicht mehr benötigte Einträge zu entfernen sowie Tippfehler zu korrigieren."
+        )
+        en_orphan = Template(
+            r"The CSP allowlists hosts whose registrable domains ($ORPHAN) were not registered at the time of the "
+            r"assessment, or could not be resolved via DNS. In many cases these are typos or domains of services "
+            r"that are no longer in use. Because such domains can be registered freely, an attacker could register "
+            r"one and then serve content -- for example scripts -- from a source the CSP already trusts. This would "
+            r"allow the protection provided by the CSP to be undermined. It is recommended to remove entries that "
+            r"are no longer needed and to correct obvious typos."
+        )
+        de_deprecated = Template(
+            r"Die CSP verwendet veraltete bzw. nicht mehr standardisierte Direktiven ($DEPRECATED). Diese werden von "
+            r"modernen Browsern teilweise ignoriert oder wurden durch neuere Direktiven ersetzt, sodass die "
+            r"beabsichtigte Einschränkung möglicherweise nicht oder nicht wie erwartet greift. Es wird empfohlen, "
+            r"die veralteten Direktiven durch ihre aktuellen Entsprechungen zu ersetzen -- etwa \texttt{report-to} "
+            r"anstelle von \texttt{report-uri} oder \texttt{frame-src} und \texttt{worker-src} anstelle von "
+            r"\texttt{child-src}."
+        )
+        en_deprecated = Template(
+            r"The CSP uses deprecated or non-standardised directives ($DEPRECATED). These are partly ignored by "
+            r"modern browsers or have been superseded by newer directives, so the intended restriction may not take "
+            r"effect or may not behave as expected. It is recommended to replace the deprecated directives with "
+            r"their current equivalents -- for example \texttt{report-to} instead of \texttt{report-uri}, or "
+            r"\texttt{frame-src} and \texttt{worker-src} instead of \texttt{child-src}."
+        )
+
+        # Put every sentence on its own line (LaTeX semantic line breaks). The
+        # split happens at a sentence-final '.', '!' or '?' followed by spaces
+        # and a capital letter, so abbreviations like "bzw." (lowercase next)
+        # and dotted domains stay intact.
+        def one_per_line(text: str) -> str:
+            return re.sub(r"(?<=[.!?]) +(?=[A-ZÄÖÜ])", "\n", text)
+
+        sections: List[str] = []
+        if bypasses:
+            sections.append(one_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
+        if orphans:
+            sections.append(one_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
+        if deprecated:
+            sections.append(one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated))))
+
+        return "\n\n".join(sections)
 
     def _block_no_csp(self, plural: bool = False) -> str:
         if self.lang == "de":
@@ -2301,7 +2709,14 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 ]
 {{csp}}
 """.strip()
-            return "\n\n".join([provide_flash, block])
+            parts = [provide_flash, block]
+            extra = self._extra_sections([res])
+            if extra:
+                parts.append(extra)
+            comment = self._findings_comment([res])
+            if comment:
+                parts.append(comment)
+            return "\n\n".join(parts)
 
         all_no_csp = all((r.error or not r.csp_raw) for r in results)
 
@@ -2369,7 +2784,14 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         table_block = "\n".join(lines)
 
-        return "\n\n".join([provide_flash, template_block, table_block])
+        parts = [provide_flash, template_block, table_block]
+        extra = self._extra_sections(results)
+        if extra:
+            parts.append(extra)
+        comment = self._findings_comment(results)
+        if comment:
+            parts.append(comment)
+        return "\n\n".join(parts)
 
 
 # ---------------------------------------
@@ -2425,16 +2847,76 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
 @click.option("--csp", is_flag=True, default=False, help="Open an interactive input to paste a CSP and parse it.")
 @click.option("-c", "--cookies", default=None, help="Semicolon-separated cookies: 'a=b; c=d'")
 @click.option("-H", "--headers", default=None, help="Semicolon-separated headers: 'X-Token: abc; Accept: text/html'")
-@click.option("-o", "--output", default=None, help="Write results to this file. If omitted, prints to console (unless --format=latex).")
-@click.option("--format", "fmt", type=click.Choice(["text", "raw", "json", "latex"]), default="text", show_default=True, help="Output format.")
+@click.option(
+    "-o",
+    "--output",
+    default=None,
+    help="Write results to this file. If omitted, prints to console (unless --format=latex).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "raw", "json", "latex"]),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
 @click.option("-l", "--lang", default="de", show_default=True, help="Language for LaTeX output (de|en|german|english).")
-@click.option("--proxy", default=None, help="Comma-separated list of proxy URLs, e.g. 'http://127.0.0.1:8080,https://proxy2:443'.")
+@click.option(
+    "--proxy", default=None, help="Comma-separated list of proxy URLs, e.g. 'http://127.0.0.1:8080,https://proxy2:443'."
+)
 @click.option("--insecure", is_flag=True, default=False, help="Disable SSL certificate verification.")
 @click.option("-r", "--redirect", is_flag=True, default=False, help="Allows redirects.")
-@click.option("-t", "--threads", default=20, show_default=True, type=int, help="Max concurrent requests when fetching multiple URLs.")
-@click.option("--retries", default=2, show_default=True, type=int, help="Number of retry attempts for transient network errors.")
+@click.option(
+    "-t",
+    "--threads",
+    default=20,
+    show_default=True,
+    type=int,
+    help="Max concurrent requests when fetching multiple URLs.",
+)
+@click.option(
+    "--retries", default=2, show_default=True, type=int, help="Number of retry attempts for transient network errors."
+)
 @click.option("--timeout", default=15.0, show_default=True, type=float, help="Per-request timeout in seconds.")
-def main(url, file_path, csp, cookies, headers, output, fmt, lang, proxy, insecure, redirect, threads, retries, timeout):
+@click.option(
+    "--check-orphans",
+    is_flag=True,
+    default=False,
+    help="Resolve allowlisted domains via DNS/WHOIS and flag orphaned (unregistered, attacker-claimable) ones.",
+)
+@click.option(
+    "--dns-resolvers",
+    default="8.8.8.8,1.1.1.1",
+    show_default=True,
+    help="Comma-separated DNS resolvers used for --check-orphans.",
+)
+@click.option(
+    "--dns-timeout",
+    default=3.0,
+    show_default=True,
+    type=float,
+    help="Per-domain DNS resolve timeout in seconds for --check-orphans.",
+)
+def main(
+    url,
+    file_path,
+    csp,
+    cookies,
+    headers,
+    output,
+    fmt,
+    lang,
+    proxy,
+    insecure,
+    redirect,
+    threads,
+    retries,
+    timeout,
+    check_orphans,
+    dns_resolvers,
+    dns_timeout,
+):
     """Inspect the Content-Security-Policy header for one or many URLs.
 
     \b
@@ -2454,11 +2936,17 @@ def main(url, file_path, csp, cookies, headers, output, fmt, lang, proxy, insecu
     cookies_dict = parse_cookies(cookies)
     extra_headers = parse_headers(headers)
 
+    resolver_list = [r.strip() for r in dns_resolvers.split(",") if r.strip()]
+
     if csp:
         csp_text = read_csp_with_rich()
         if csp_text is None:
             sys.exit(-1)
         result = parse_csp(csp_text, "<stdin>", "<stdin>")
+        if check_orphans:
+            asyncio.run(
+                annotate_orphans([result], dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
+            )
         TextRenderer(console=Console()).print_to_console([result])
         return
 
@@ -2492,6 +2980,11 @@ def main(url, file_path, csp, cookies, headers, output, fmt, lang, proxy, insecu
             max_retries=retries,
         )
     )
+
+    if check_orphans:
+        asyncio.run(
+            annotate_orphans(results, dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
+        )
 
     if output:
         if fmt == "json":

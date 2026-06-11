@@ -1,14 +1,19 @@
 [project]
 name = "csp-check"
-version = "0.4.3"
+version = "0.5.0"
 description = "A Content-Security-Policy inspector with rich output, file export, and directive analysis."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "syss-internal" }
 authors = [{ name = "Henry Weckermann", email = "henry.weckermann@syss.de" }]
-# click is pinned <8.4: 8.4.x ships a broken fish shell-completion template
-# (a literal newline in `string split` breaks the generated script).
-dependencies = ["click>=8.1.0,<8.4", "requests>=2.31.0", "tldextract>=5.1.0", "rich>=13.7.0"]
+dependencies = [
+  "click>=8.1.0,<8.4",
+  "requests>=2.31.0",
+  "tldextract>=5.1.0",
+  "rich>=13.7.0",
+  "dnspython>=2.4.0",
+  "httpx",
+]
 
 [project.scripts]
 csp-check = "csp_check.csp_check:main"

@@ -73,8 +73,35 @@ Options:
                                   network errors.  [default: 2]
   --timeout FLOAT                 Per-request timeout in seconds.
                                   [default: 15.0]
+  --check-orphans                 Resolve allowlisted domains via DNS/WHOIS and
+                                  flag orphaned (unregistered, attacker-
+                                  claimable) ones.
+  --dns-resolvers TEXT            Comma-separated DNS resolvers used for
+                                  --check-orphans.  [default: 8.8.8.8,1.1.1.1]
+  --dns-timeout FLOAT             Per-domain DNS resolve timeout in seconds for
+                                  --check-orphans.  [default: 3.0]
   -h, --help                      Show this message and exit.
 ```
+
+---
+
+## Orphaned (dangling) domains
+
+A host allowlisted in a CSP whose registrable domain no longer resolves — or was
+never registered — is a real risk: an attacker can register it and serve scripts,
+styles or frames from a source the policy already trusts, sidestepping the CSP.
+These entries are frequently typos (e.g. `gogle-analytics.com`).
+
+Pass `--check-orphans` to perform live DNS (and, if `python-whois` is installed,
+WHOIS) lookups on every registrable domain referenced across all checked CSPs.
+Each registrable domain is resolved once and de-duplicated across URLs.
+Orphaned sources are highlighted in the text output (`[ORPHAN: <status>]`),
+included in the JSON output (`orphan_findings` and per-item `is_orphan`), and —
+for LaTeX output — summarized together with the known bypass domains in a
+`%`-prefixed comment block appended under the generated finding.
+
+> **Note:** `--check-orphans` makes outbound DNS/WHOIS requests and is therefore
+> opt-in. It does nothing in `--csp` mode unless the flag is given.
 
 ---
 

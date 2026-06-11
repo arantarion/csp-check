@@ -2,6 +2,7 @@
 # /// script
 # requires-python = ">=3.9"
 # dependencies = [
+#     "click<8.4",
 #     "requests",
 #     "rich",
 #     "tldextract",
@@ -11,13 +12,13 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import re
 import sys
-import textwrap
 import urllib.parse
+
+import click
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from string import Template
@@ -2418,168 +2419,111 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     return csp
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Inspect the Content-Security-Policy header for one or many URLs.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=textwrap.dedent(
-            """\
-            Examples:
-              csp_check.py -u https://example.com
-              csp_check.py -f urls.txt
-              csp_check.py -u example.com -o results.txt
-              csp_check.py -u example.com -o results.json --format json
-              csp_check.py -u example.com -o results.tex --format latex --lang de
-            """
-        ),
-    )
-    src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("-u", "--url", help="Single URL/domain to check.")
-    src.add_argument("-f", "--file", help="Path to a file with one URL per line.")
-    src.add_argument("--csp", action="store_true", help="Open an interactive input to paste a CSP and parse it.")
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("-u", "--url", default=None, help="Single URL/domain to check.")
+@click.option("-f", "--file", "file_path", default=None, help="Path to a file with one URL per line.")
+@click.option("--csp", is_flag=True, default=False, help="Open an interactive input to paste a CSP and parse it.")
+@click.option("-c", "--cookies", default=None, help="Semicolon-separated cookies: 'a=b; c=d'")
+@click.option("-H", "--headers", default=None, help="Semicolon-separated headers: 'X-Token: abc; Accept: text/html'")
+@click.option("-o", "--output", default=None, help="Write results to this file. If omitted, prints to console (unless --format=latex).")
+@click.option("--format", "fmt", type=click.Choice(["text", "raw", "json", "latex"]), default="text", show_default=True, help="Output format.")
+@click.option("-l", "--lang", default="de", show_default=True, help="Language for LaTeX output (de|en|german|english).")
+@click.option("--proxy", default=None, help="Comma-separated list of proxy URLs, e.g. 'http://127.0.0.1:8080,https://proxy2:443'.")
+@click.option("--insecure", is_flag=True, default=False, help="Disable SSL certificate verification.")
+@click.option("-r", "--redirect", is_flag=True, default=False, help="Allows redirects.")
+@click.option("-t", "--threads", default=20, show_default=True, type=int, help="Max concurrent requests when fetching multiple URLs.")
+@click.option("--retries", default=2, show_default=True, type=int, help="Number of retry attempts for transient network errors.")
+@click.option("--timeout", default=15.0, show_default=True, type=float, help="Per-request timeout in seconds.")
+def main(url, file_path, csp, cookies, headers, output, fmt, lang, proxy, insecure, redirect, threads, retries, timeout):
+    """Inspect the Content-Security-Policy header for one or many URLs.
 
-    p.add_argument("-c", "--cookies", help="Semicolon-separated cookies: 'a=b; c=d'", default=None)
-    p.add_argument(
-        "-H", "--headers", help="Semicolon-separated headers: 'X-Token: abc; Accept: text/html'", default=None
-    )
-    p.add_argument(
-        "-o",
-        "--output",
-        help="Write results to this file. If omitted, prints to console (unless --format=latex).",
-        default=None,
-    )
-    p.add_argument(
-        "--format",
-        choices=["text", "raw", "json", "latex"],
-        default="text",
-        help="Output format when writing to a file. Default: text.",
-    )
-    p.add_argument(
-        "-l",
-        "--lang",
-        help="Language for LaTeX output (de|en|german|english). Default: de.",
-        default="de",
-    )
-    p.add_argument(
-        "--proxy",
-        help="Comma-separated list of proxy URLs to use, e.g. 'http://127.0.0.1:8080,https://proxy2:443'.",
-        default=None,
-    )
-    p.add_argument(
-        "--insecure",
-        action="store_false",
-        help="Disable SSL certificate verification.",
-    )
-    p.add_argument(
-        "-r",
-        "--redirect",
-        action="store_true",
-        help="Allows redirects.",
-    )
-    p.add_argument(
-        "-t",
-        "--threads",
-        type=int,
-        default=20,
-        help="Max number of concurrent requests when fetching multiple URLs (default: 20)",
-    )
-    p.add_argument(
-        "--retries",
-        type=int,
-        default=2,
-        help="Number of retry attempts for transient network errors (default: 2)",
-    )
-    p.add_argument(
-        "--timeout",
-        type=float,
-        default=15.0,
-        help="Per-request timeout in seconds (default: 15)",
-    )
+    \b
+    Examples:
+      csp-check -u https://example.com
+      csp-check -f urls.txt
+      csp-check -u example.com -o results.txt
+      csp-check -u example.com -o results.json --format json
+      csp-check -u example.com -o results.tex --format latex --lang de
+    """
+    sources = sum([bool(url), bool(file_path), bool(csp)])
+    if sources == 0:
+        raise click.UsageError("One of --url, --file, or --csp is required.")
+    if sources > 1:
+        raise click.UsageError("--url, --file, and --csp are mutually exclusive.")
 
-    return p
+    cookies_dict = parse_cookies(cookies)
+    extra_headers = parse_headers(headers)
 
-
-def main() -> int:
-    args = build_arg_parser().parse_args()
-    cookies = parse_cookies(args.cookies)
-    extra_headers = parse_headers(args.headers)
-
-    if args.csp:
+    if csp:
         csp_text = read_csp_with_rich()
         if csp_text is None:
-            return -1
+            sys.exit(-1)
         result = parse_csp(csp_text, "<stdin>", "<stdin>")
         TextRenderer(console=Console()).print_to_console([result])
-        return 0
+        return
 
-    if args.url:
-        urls = [args.url]
+    if url:
+        urls = [url]
     else:
         try:
-            urls = read_urls_from_file(args.file)
+            urls = read_urls_from_file(file_path)
         except Exception as e:
             console.print(f"[red]Failed to read file:[/red] {e}")
-            return 2
+            sys.exit(2)
 
-    if (args.format == "text" or args.format is None) and len(urls) > 1:
-        print_choice = input(f"Do you really want to print {len(urls)} results in you terminal? (Y/n): ")
+    if (fmt == "text" or fmt is None) and len(urls) > 1:
+        print_choice = input(f"Do you really want to print {len(urls)} results in your terminal? (Y/n): ")
         if not (print_choice.lower() == "y" or print_choice == ""):
-            print("Try one of the other output methods with -o [raw, json, latex]")
-            exit(1)
+            print("Try one of the other output methods with --format [raw, json, latex]")
+            sys.exit(1)
 
-    if args.proxy:
-        proxies = normalize_proxy_list(args.proxy)
-    else:
-        proxies = {}
+    proxies = normalize_proxy_list(proxy) if proxy else {}
 
     results: List[URLResult] = asyncio.run(
         fetch_multiple_csps(
             urls,
-            cookies=cookies,
+            cookies=cookies_dict,
             headers=extra_headers,
             proxies=proxies,
-            is_secure=args.insecure,
-            redirect=args.redirect,
-            concurrency=args.threads,
-            timeout_s=args.timeout,
-            max_retries=args.retries,
+            is_secure=not insecure,
+            redirect=redirect,
+            concurrency=threads,
+            timeout_s=timeout,
+            max_retries=retries,
         )
     )
 
-    # File output
-    if args.output:
-        if args.format == "json":
+    if output:
+        if fmt == "json":
             renderer: BaseRenderer = JsonRenderer()
-        elif args.format == "latex":
-            renderer = LatexRenderer(lang=args.lang)
+        elif fmt == "latex":
+            renderer = LatexRenderer(lang=lang)
         else:
             renderer = TextRenderer(console=None)
 
         try:
             content = renderer.render_many(results)
-            with open(args.output, "w", encoding="utf-8") as fh:
+            with open(output, "w", encoding="utf-8") as fh:
                 fh.write(content)
-            console.print(f"[green]Wrote output to[/green] {args.output}")
+            console.print(f"[green]Wrote output to[/green] {output}")
         except Exception as e:
             console.print(f"[red]Failed to write output:[/red] {e}")
-            return 3
+            sys.exit(3)
     else:
-        if args.format == "latex":
-            content = LatexRenderer(lang=args.lang).render_many(results)
+        if fmt == "latex":
+            content = LatexRenderer(lang=lang).render_many(results)
             print(content)
-        elif args.format == "raw":
+        elif fmt == "raw":
             for res in results:
                 content = pretty_csp(res.csp_raw) if res else ""  # type: ignore
                 print(content)
-        elif args.format == "json":
+        elif fmt == "json":
             renderer = JsonRenderer()
             content = renderer.render_many(results)
             print(content)
         else:
             TextRenderer(console=console).print_to_console(results)
 
-    return 0
-
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

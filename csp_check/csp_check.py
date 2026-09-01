@@ -82,7 +82,8 @@ T_HELP: Dict[str, Dict[str, str]] = {
     },
     "style-src-elem": {"text": 'Valid sources for <style> elements and <link rel="stylesheet">.', "color": "white"},
     "style-src-attr": {"text": "Valid sources for inline style attributes.", "color": "white"},
-    "webrtc-src": {"text": "Valid sources for WebRTC.", "color": "white"},
+    "webrtc": {"text": "Allows or blocks WebRTC connections ('allow' / 'block').", "color": "white"},
+    "webrtc-src": {"text": "Draft name for WebRTC sources; never standardised.", "color": "yellow"},
     "worker-src": {"text": "Valid sources for Worker/SharedWorker/ServiceWorker.", "color": "white"},
     # Document directives
     "base-uri": {"text": "Restricts URLs allowed in <base>.", "color": "white"},
@@ -162,7 +163,15 @@ DEPRECATED_OR_LEGACY = {
     "referrer",
     "report-uri",
     "reflected-xss",
+    "webrtc-src",
 }
+
+# Every directive name the tool knows about. Derived from the help table so the
+# two cannot drift apart: source expressions are quoted, schemes end in a colon
+# and the wildcard is a single star, none of which is a directive name.
+KNOWN_DIRECTIVES: Set[str] = {
+    k for k in T_HELP if not k.startswith("'") and not k.endswith(":") and k != "*"
+} | DEPRECATED_OR_LEGACY
 
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {
@@ -1439,6 +1448,7 @@ class Policy:
     name: str
     items: List[SourceItem] = field(default_factory=list)
     is_deprecated: bool = False
+    is_unknown: bool = False
     help_text: Optional[str] = None
 
 
@@ -1476,6 +1486,7 @@ class URLResult:
     csp_raw: Optional[str]
     policies: List[Policy] = field(default_factory=list)
     deprecated_used: List[str] = field(default_factory=list)
+    unknown_used: List[str] = field(default_factory=list)
     warnings: Dict[str, object] = field(default_factory=dict)
     bypass_findings: List[BypassFinding] = field(default_factory=list)
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
@@ -1791,6 +1802,7 @@ def parse_csp(
 
     policies: List[Policy] = []
     deprecated_used: List[str] = []
+    unknown_used: List[str] = []
     bypass_findings: List[BypassFinding] = []
     seen_bypasses: set = set()
 
@@ -1815,13 +1827,18 @@ def parse_csp(
         is_depr = name in DEPRECATED_OR_LEGACY
         if is_depr:
             deprecated_used.append(name)
+        # A misspelled directive is silently ignored by the browser, so the
+        # restriction it was meant to express does not apply at all.
+        is_unknown = name not in KNOWN_DIRECTIVES
+        if is_unknown:
+            unknown_used.append(name)
 
         if name == "report-to":
             has_report_to = True
         if name == "upgrade-insecure-requests":
             has_upgrade_insecure = True
 
-        policy = Policy(name=name, is_deprecated=is_depr, help_text=p_help)
+        policy = Policy(name=name, is_deprecated=is_depr, is_unknown=is_unknown, help_text=p_help)
 
         for item in values:
             lower_item = item.lower()
@@ -1892,6 +1909,7 @@ def parse_csp(
 
     warnings_dict = {
         "deprecated_directives": sorted(set(deprecated_used)),
+        "unknown_directives": sorted(set(unknown_used)),
         "unsafe_inline": has_unsafe_inline,
         "unsafe_eval": has_unsafe_eval,
         "wildcard_sources": has_wildcard,
@@ -1918,6 +1936,7 @@ def parse_csp(
         csp_raw=csp_header,
         policies=policies,
         deprecated_used=sorted(set(deprecated_used)),
+        unknown_used=sorted(set(unknown_used)),
         warnings=warnings_dict,
         bypass_findings=bypass_findings,
         error=None,
@@ -2471,6 +2490,11 @@ class TextRenderer(BaseRenderer):
                 warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
             if res.warnings.get("deprecated_directives"):
                 warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))  # type: ignore
+            if res.unknown_used:
+                warn_lines.append(
+                    "[red]Unknown directives (ignored by browsers, check for typos):[/red] "
+                    + ", ".join(res.unknown_used)
+                )
             if res.warnings.get("unsafe_inline"):
                 warn_lines.append("Uses [red]'unsafe-inline'[/red].")
             if res.warnings.get("unsafe_eval"):
@@ -2529,6 +2553,8 @@ class TextRenderer(BaseRenderer):
                 directive_label = f"[blue]{p.name}[/blue]"
                 if p.is_deprecated:
                     directive_label += " [yellow](deprecated/legacy)[/yellow]"
+                if p.is_unknown:
+                    directive_label += " [red](unknown directive)[/red]"
                 if p.help_text:
                     directive_label += f" [white]— {p.help_text}[/white]"
 
@@ -2640,6 +2666,12 @@ class TextRenderer(BaseRenderer):
                 lines.append("Deprecated/legacy directives present: " + ", ".join(res.deprecated_used))
                 lines.append("")
 
+            if res.unknown_used:
+                lines.append(
+                    "Unknown directives (ignored by browsers, check for typos): " + ", ".join(res.unknown_used)
+                )
+                lines.append("")
+
             if res.csp_raw:
                 lines.append("CSP (raw):")
                 lines.append("  " + res.csp_raw)
@@ -2649,6 +2681,8 @@ class TextRenderer(BaseRenderer):
                 tag = f"[{p.name}]"
                 if p.is_deprecated:
                     tag += " (deprecated/legacy)"
+                if p.is_unknown:
+                    tag += " (unknown directive)"
                 if p.help_text:
                     tag += f" — {p.help_text}"
                 lines.append(tag)
@@ -2718,6 +2752,7 @@ class JsonRenderer(BaseRenderer):
             return {
                 "name": p.name,
                 "is_deprecated": p.is_deprecated,
+                "is_unknown": p.is_unknown,
                 "help_text": p.help_text,
                 "items": [
                     {
@@ -2770,6 +2805,7 @@ class JsonRenderer(BaseRenderer):
                 "fetched_url": r.url,
                 "csp_raw": r.csp_raw,
                 "deprecated_used": r.deprecated_used,
+                "unknown_used": r.unknown_used,
                 "report_only": r.report_only,
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
@@ -2874,6 +2910,7 @@ class LatexRenderer(BaseRenderer):
             {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
         )
         deprecated = sorted({d for r in results for d in r.deprecated_used})
+        unknown = sorted({d for r in results for d in r.unknown_used})
 
         de_bypass = Template(
             r"Einige der in der CSP erlaubten Quellen ($BYPASS) sind dafür bekannt, dass sich über sie die "
@@ -2930,6 +2967,19 @@ class LatexRenderer(BaseRenderer):
             r"is recommended to remove internal hosts from the publicly served CSP and to maintain internal and "
             r"external policies separately."
         )
+        de_unknown = Template(
+            r"In der CSP werden Direktiven verwendet, die im Standard nicht definiert sind ($UNKNOWN). "
+            r"Browser ignorieren unbekannte Direktiven vollständig. Handelt es sich um einen Schreibfehler, "
+            r"greift die beabsichtigte Einschränkung für den betroffenen Ressourcentyp nicht, ohne dass dies "
+            r"im laufenden Betrieb auffällt. Es wird empfohlen, die Schreibweise der betroffenen Direktiven zu "
+            r"prüfen und zu korrigieren."
+        )
+        en_unknown = Template(
+            r"The CSP uses directives that the standard does not define ($UNKNOWN). Browsers ignore unknown "
+            r"directives entirely. If the name is a typo, the intended restriction for the affected resource "
+            r"type does not apply at all, and nothing in normal operation reveals this. It is recommended to "
+            r"check the spelling of the affected directives and to correct it."
+        )
         de_deprecated = Template(
             r"Die CSP verwendet veraltete bzw. nicht mehr standardisierte Direktiven ($DEPRECATED). Diese werden von "
             r"modernen Browsern teilweise ignoriert oder wurden durch neuere Direktiven ersetzt, sodass die "
@@ -2960,6 +3010,8 @@ class LatexRenderer(BaseRenderer):
             sections.append(one_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
         if internal_hosts:
             sections.append(one_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts))))
+        if unknown:
+            sections.append(one_per_line((de_unknown if de else en_unknown).substitute(UNKNOWN=tt(unknown))))
         if deprecated:
             sections.append(
                 one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))

@@ -1540,6 +1540,7 @@ class URLResult:
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
     host_findings: List[HostFinding] = field(default_factory=list)
     report_only: bool = False
+    unreachable: bool = False
     legacy_header: bool = False
     reporting_endpoints_present: Optional[bool] = None
     error: Optional[str] = None
@@ -2585,12 +2586,20 @@ async def fetch_csp(
                 last_exc = e
                 if attempt >= max_retries:
                     return URLResult(
-                        url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", e)
+                        url=url,
+                        requested_url=requested_url,
+                        csp_raw=None,
+                        unreachable=True,
+                        error=_describe_exc("Request failed", e),
                     )
                 await asyncio.sleep(backoff_base * (2**attempt))
         else:
             return URLResult(
-                url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", last_exc)
+                url=url,
+                requested_url=requested_url,
+                csp_raw=None,
+                unreachable=True,
+                error=_describe_exc("Request failed", last_exc),
             )
 
         # With --redirect the response comes from the final hop; report that
@@ -2627,7 +2636,13 @@ async def fetch_csp(
         return result
 
     except Exception as e:
-        return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", e))
+        return URLResult(
+            url=url,
+            requested_url=requested_url,
+            csp_raw=None,
+            unreachable=True,
+            error=_describe_exc("Request failed", e),
+        )
     finally:
         if owns_client:
             await client.aclose()
@@ -3108,6 +3123,7 @@ class JsonRenderer(BaseRenderer):
                 "unknown_used": r.unknown_used,
                 "report_only": r.report_only,
                 "legacy_header": r.legacy_header,
+                "unreachable": r.unreachable,
                 "reporting_endpoints_present": r.reporting_endpoints_present,
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
@@ -3136,6 +3152,7 @@ COLUMN_TITLES: Dict[str, Dict[str, str]] = {
         "data": r"\texttt{data:}/\texttt{blob:} erlaubt",
         "no-report": "Kein Reporting",
         "no-csp": "Keine CSP gesetzt",
+        "not-reachable": "Nicht erreichbar",
     },
     "en": {
         "missing-directive": "Missing directives",
@@ -3145,6 +3162,7 @@ COLUMN_TITLES: Dict[str, Dict[str, str]] = {
         "data": r"\texttt{data:}/\texttt{blob:} allowed",
         "no-report": "No reporting",
         "no-csp": "No CSP set",
+        "not-reachable": "Not reachable",
     },
 }
 
@@ -3220,6 +3238,24 @@ class LatexRenderer(BaseRenderer):
         lines.extend(host_rows or ["%   (none found)"])
         lines.append(sep)
         return "\n".join(lines)
+
+    def _unreachable_comment(self, results: List[URLResult]) -> str:
+        """Name the hosts that never answered. Nothing can be said about the CSP
+        of a host that was not reached, so the finding must not claim it has
+        none."""
+        rows = [f"%   {r.requested_url}: {r.error}" for r in results if r.unreachable]
+        if not rows:
+            return ""
+        sep = "% " + "-" * 73
+        return "\n\n" + "\n".join(
+            [
+                sep,
+                "% Not reachable during the assessment. No statement about a Content",
+                "% Security Policy is possible for these hosts:",
+                *rows,
+                sep,
+            ]
+        )
 
     def _legacy_header_comment(self, results: List[URLResult]) -> str:
         """Note the policies that exist but are served through the obsolete
@@ -3492,6 +3528,12 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
     def render_many(self, results: List[URLResult]) -> str:
         provide_flash = r"\providecommand{\flash}{\syred{\faFlash}}"
+        unreachable_note = self._unreachable_comment(results)
+        reached = [r for r in results if not r.unreachable]
+
+        # Nothing was tested, so there is no finding to make.
+        if not reached:
+            return unreachable_note.lstrip("\n")
 
         if len(results) == 1:
             res = results[0]
@@ -3524,10 +3566,10 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
                 parts.append(comment)
             return "\n\n".join(parts)
 
-        all_no_csp = all(not has_effective_csp(r) for r in results)
-
-        if all_no_csp:
-            return self._block_no_csp(plural=True) + self._legacy_header_comment(results)
+        if all(not has_effective_csp(r) for r in reached):
+            # Only the hosts that answered are described by the finding, so a
+            # single reachable host among unreachable ones stays singular.
+            return self._block_no_csp(plural=len(reached) > 1) + self._legacy_header_comment(results) + unreachable_note
 
         seen_problems = {p for r in results if has_effective_csp(r) for p in self._problems_list(r)}
         cumulative: List[str] = [p for p in PROBLEM_ORDER if p in seen_problems]
@@ -3551,6 +3593,8 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         titles = COLUMN_TITLES[self.lang]
         columns = cumulative + ["no-csp"]
+        if len(reached) != len(results):
+            columns.append("not-reachable")
         header_titles = ["URL"] + [titles[c] for c in columns]
         col_spec = "l" + ("-c" * len(columns))
 
@@ -3566,18 +3610,14 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         )
 
         for r in results:
-            row_cells: List[str] = [rf"\texttt{{{latex_escape(r.requested_url)}}}"]
-
-            if not has_effective_csp(r):
-                for _ in cumulative:
-                    row_cells.append("")
-                row_cells.append(r"\flash")
+            if r.unreachable:
+                marked = {"not-reachable"}
+            elif not has_effective_csp(r):
+                marked = {"no-csp"}
             else:
-                plist = set(self._problems_list(r))
-                for p in cumulative:
-                    row_cells.append(r"\flash" if p in plist else "")
-                row_cells.append("")
-
+                marked = set(self._problems_list(r))
+            row_cells = [rf"\texttt{{{latex_escape(r.requested_url)}}}"]
+            row_cells += [r"\flash" if c in marked else "" for c in columns]
             lines.append(" & ".join(row_cells) + r" \\")
         lines.append(r"\end{sytable}")
 
@@ -3590,7 +3630,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         comment = self._findings_comment(results)
         if comment:
             parts.append(comment)
-        return "\n\n".join(parts)
+        return "\n\n".join(parts) + unreachable_note
 
 
 # ---------------------------------------

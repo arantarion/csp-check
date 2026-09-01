@@ -1,9 +1,8 @@
 #!/usr/bin/env -S uv --quiet run --script
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.12"
 # dependencies = [
 #     "click<8.4",
-#     "requests",
 #     "rich",
 #     "tldextract",
 #     "httpx",

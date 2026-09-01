@@ -8,7 +8,6 @@ license = { text = "syss-internal" }
 authors = [{ name = "Henry Weckermann", email = "henry.weckermann@syss.de" }]
 dependencies = [
   "click>=8.1.0,<8.4",
-  "requests>=2.31.0",
   "tldextract>=5.1.0",
   "rich>=13.7.0",
   "dnspython>=2.4.0",

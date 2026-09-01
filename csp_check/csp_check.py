@@ -1453,9 +1453,11 @@ class SourceItem:
 @dataclass
 class Policy:
     name: str
+    policy_index: int = 0
     items: List[SourceItem] = field(default_factory=list)
     is_deprecated: bool = False
     is_unknown: bool = False
+    is_ignored_duplicate: bool = False
     help_text: Optional[str] = None
 
 
@@ -1639,9 +1641,9 @@ def is_wildcard_token(token: str) -> bool:
     return wildcard_kind(token) is not None
 
 
-def domain_matches_bypass_domain(csp_source: str, bypass_domain: str) -> bool:
-    """Return True if CSP source token would permit loading from bypass_domain."""
-    if not bypass_domain or not csp_source:
+def source_permits_host(csp_source: str, host: str) -> bool:
+    """Return True if the CSP source token would permit loading from `host`."""
+    if not host or not csp_source:
         return False
 
     src = csp_source.strip().lower()
@@ -1652,16 +1654,16 @@ def domain_matches_bypass_domain(csp_source: str, bypass_domain: str) -> bool:
 
     # Strip port and path
     src = src.split(":")[0].split("/")[0]
-    bypass_lc = bypass_domain.lower().strip()
+    host_lc = host.lower().strip()
 
     # Exact match
-    if src == bypass_lc:
+    if src == host_lc:
         return True
 
     # Wildcard subdomain: *.example.com allows sub.example.com
     if src.startswith("*."):
         suffix = src[1:]  # ".example.com"
-        if bypass_lc.endswith(suffix):
+        if host_lc.endswith(suffix):
             return True
 
     return False
@@ -1833,6 +1835,158 @@ def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
     return "\n".join(out_lines)
 
 
+def _build_source_item(item: str) -> SourceItem:
+    """Turn one source token into a SourceItem. Keywords and scheme sources are
+    case-insensitive; only the payload of a nonce or hash is not, and that is
+    collapsed into the prefix anyway. Host sources keep their spelling so the
+    output shows what the policy actually says."""
+    lower_item = item.lower()
+    if lower_item.startswith(("'nonce-", "'sha256-", "'sha384-", "'sha512-")):
+        norm = lower_item.split("-", 1)[0] + "-'"
+    elif item.startswith("'") or (lower_item.endswith(":") and "//" not in lower_item):
+        norm = lower_item
+    else:
+        norm = item
+
+    wild = wildcard_kind(item)
+    if wild:
+        color = "dark_orange"
+    elif norm in {"'unsafe-inline'", "'unsafe-eval'"}:
+        color = "red"
+    elif norm in {"data:", "blob:"}:
+        color = "yellow"
+    elif norm in {"'none'", "'self'"}:
+        color = "blue"
+    else:
+        color = "white"
+
+    return SourceItem(
+        raw=item,
+        normalized=norm,
+        note=T_HELP.get(norm, {}).get("text"),
+        color=color,
+        wildcard_kind=wild,
+    )
+
+
+def _parse_policies(policy_sets: List[List[str]]) -> List[Policy]:
+    """Build the Policy objects for every policy in the header.
+
+    Within one policy the browser applies the first occurrence of a directive
+    and ignores the rest, so later ones are kept for display but marked, and
+    nothing downstream counts them."""
+    policies: List[Policy] = []
+    for index, directives in enumerate(policy_sets):
+        seen: Set[str] = set()
+        for directive in directives:
+            tokens = [t for t in directive.split() if t]
+            if not tokens:
+                continue
+            # Directive names are ASCII case-insensitive.
+            name = tokens[0].lower()
+            policies.append(
+                Policy(
+                    name=name,
+                    policy_index=index,
+                    items=[_build_source_item(v) for v in tokens[1:]],
+                    is_deprecated=name in DEPRECATED_OR_LEGACY,
+                    # A misspelled directive is silently ignored by the browser,
+                    # so the restriction it was meant to express does not apply.
+                    is_unknown=name not in KNOWN_DIRECTIVES,
+                    is_ignored_duplicate=name in seen,
+                    help_text=T_HELP.get(name, {}).get("text"),
+                )
+            )
+            seen.add(name)
+    return policies
+
+
+def _scan_bypasses(policies: List[Policy]) -> List[BypassFinding]:
+    """Mark every source that names a domain known to defeat a CSP."""
+    findings: List[BypassFinding] = []
+    seen: Set[tuple] = set()
+    for policy in policies:
+        for item in policy.items:
+            for bypass_domain, meta in BYPASS_DOMAINS.items():
+                if not source_permits_host(item.normalized, bypass_domain):
+                    continue
+                item.is_bypass = True
+                item.color = "bright_red"
+                key = (policy.name, item.raw, bypass_domain)
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append(
+                    BypassFinding(
+                        directive=policy.name,
+                        source_raw=item.raw,
+                        bypass_domain=bypass_domain,
+                        risks=meta["risks"],
+                        pocs=meta["pocs"],
+                    )
+                )
+    return findings
+
+
+def _analyse_policies(policies: List[Policy]) -> Dict[str, Any]:
+    """Derive the warning flags from the policies the browser actually applies."""
+    names = {p.name for p in policies}
+    catchall_script_sources: List[str] = []
+
+    has_unsafe_inline = False
+    has_unsafe_eval = False
+    has_wildcard_any = False
+    has_wildcard_partial = False
+    has_data_or_blob = False
+    saw_host_source = False
+    has_explicit_https_source = False
+
+    for policy in policies:
+        for item in policy.items:
+            lower_raw = item.raw.lower()
+            if is_host(item.raw):
+                saw_host_source = True
+            if item.normalized == "'unsafe-inline'":
+                has_unsafe_inline = True
+            if item.normalized == "'unsafe-eval'":
+                has_unsafe_eval = True
+            if item.wildcard_kind == "any":
+                has_wildcard_any = True
+            elif item.wildcard_kind == "partial":
+                has_wildcard_partial = True
+            if item.normalized in {"data:", "blob:"}:
+                has_data_or_blob = True
+            if item.normalized == "https:" or lower_raw.startswith(("https://", "wss://")):
+                has_explicit_https_source = True
+            # A source that matches every host permits every known bypass domain
+            # too, but matches none of them literally, so the scan misses it.
+            if policy.name in SCRIPT_CAPABLE_DIRECTIVES and (
+                item.wildcard_kind == "any" or item.normalized in {"https:", "http:"}
+            ):
+                catchall_script_sources.append(f"{policy.name} {item.raw}")
+
+    return {
+        "missing_directives": missing_directives(names),
+        "deprecated_directives": sorted(names & DEPRECATED_OR_LEGACY),
+        "unknown_directives": sorted(names - KNOWN_DIRECTIVES),
+        "unsafe_inline": has_unsafe_inline,
+        "unsafe_eval": has_unsafe_eval,
+        # Kept as the combined flag the LaTeX all-origins option is built on.
+        "wildcard_sources": has_wildcard_any or has_wildcard_partial,
+        "wildcard_any_origin": has_wildcard_any,
+        "wildcard_partial": has_wildcard_partial,
+        "data_or_blob": has_data_or_blob,
+        # report-uri is deprecated but still honoured by every current browser,
+        # so a policy that has one is not without any reporting at all.
+        "missing_report_to": not (names & {"report-to", "report-uri"}),
+        "legacy_reporting_only": "report-uri" in names and "report-to" not in names,
+        "missing_https_and_upgrade": (
+            saw_host_source and not has_explicit_https_source and "upgrade-insecure-requests" not in names
+        ),
+        "bypass_via_catchall": catchall_script_sources,
+    }
+
+
 def parse_csp(
     csp_header: Optional[str],
     url: str,
@@ -1843,173 +1997,32 @@ def parse_csp(
             url=url, requested_url=requested_url, csp_raw=None, error="Content-Security-Policy header not found"
         )
 
-    policy_sets = split_policies(csp_header)
-    parts = [d for pol in policy_sets for d in pol]
+    policies = _parse_policies(split_policies(csp_header))
+    applied = [p for p in policies if not p.is_ignored_duplicate]
 
-    policies: List[Policy] = []
-    deprecated_used: List[str] = []
-    unknown_used: List[str] = []
-    bypass_findings: List[BypassFinding] = []
-    seen_bypasses: set = set()
+    warnings_dict = _analyse_policies(applied)
+    bypass_findings = _scan_bypasses(applied)
+    warnings_dict["bypass_domains"] = bool(bypass_findings)
+    duplicates = sorted({p.name for p in policies if p.is_ignored_duplicate})
+    if duplicates:
+        warnings_dict["duplicate_directives"] = duplicates
 
-    has_unsafe_inline = False
-    has_unsafe_eval = False
-    has_wildcard_any = False
-    has_wildcard_partial = False
-    has_data_or_blob = False
-    catchall_script_sources: List[str] = []
-    has_report_to = False
-    has_report_uri = False
-    has_upgrade_insecure = False
-    saw_host_source = False
-    has_explicit_https_source = False
-
-    for part in parts:
-        tokens = [t for t in part.split() if t]
-        if not tokens:
-            continue
-
-        # Directive names are ASCII case-insensitive.
-        name, *values = tokens
-        name = name.lower()
-        p_help = T_HELP.get(name, {}).get("text")
-        is_depr = name in DEPRECATED_OR_LEGACY
-        if is_depr:
-            deprecated_used.append(name)
-        # A misspelled directive is silently ignored by the browser, so the
-        # restriction it was meant to express does not apply at all.
-        is_unknown = name not in KNOWN_DIRECTIVES
-        if is_unknown:
-            unknown_used.append(name)
-
-        if name == "report-to":
-            has_report_to = True
-        if name == "report-uri":
-            has_report_uri = True
-        if name == "upgrade-insecure-requests":
-            has_upgrade_insecure = True
-
-        policy = Policy(name=name, is_deprecated=is_depr, is_unknown=is_unknown, help_text=p_help)
-
-        for item in values:
-            lower_item = item.lower()
-
-            # Keywords and scheme sources are case-insensitive; only the payload
-            # of a nonce/hash is not, and that is collapsed into the prefix
-            # anyway. Host sources keep their original spelling for display.
-            if lower_item.startswith(("'nonce-", "'sha256-", "'sha384-", "'sha512-")):
-                norm = lower_item.split("-", 1)[0] + "-'"
-            elif item.startswith("'") or (lower_item.endswith(":") and "//" not in lower_item):
-                norm = lower_item
-            else:
-                norm = item
-
-            wild = wildcard_kind(item)
-            if is_host(item):
-                saw_host_source = True
-
-            note = T_HELP.get(norm, {}).get("text")
-
-            if norm == "'unsafe-inline'":
-                has_unsafe_inline = True
-            if norm == "'unsafe-eval'":
-                has_unsafe_eval = True
-            if wild == "any":
-                has_wildcard_any = True
-            elif wild == "partial":
-                has_wildcard_partial = True
-            if norm in {"data:", "blob:"}:
-                has_data_or_blob = True
-            # A source that matches every host permits every known bypass domain
-            # too, but matches none of them literally, so the scan below misses
-            # it entirely.
-            if name in SCRIPT_CAPABLE_DIRECTIVES and (wild == "any" or norm in {"https:", "http:"}):
-                catchall_script_sources.append(f"{name} {item}")
-            if norm == "https:" or lower_item.startswith("https://") or lower_item.startswith("wss://"):
-                has_explicit_https_source = True
-
-            is_bypass_source = False
-            for bypass_domain, meta in BYPASS_DOMAINS.items():
-                if domain_matches_bypass_domain(norm, bypass_domain):
-                    is_bypass_source = True
-                    key = (name, item, bypass_domain)
-                    if key not in seen_bypasses:
-                        seen_bypasses.add(key)
-                        bypass_findings.append(
-                            BypassFinding(
-                                directive=name,
-                                source_raw=item,
-                                bypass_domain=bypass_domain,
-                                risks=meta["risks"],
-                                pocs=meta["pocs"],
-                            )
-                        )
-
-            # Coloring rules
-            if is_bypass_source:
-                color = "bright_red"
-            elif wild:
-                color = "dark_orange"
-            elif norm in {"'unsafe-inline'", "'unsafe-eval'"}:
-                color = "red"
-            elif norm in {"data:", "blob:"}:
-                color = "yellow"
-            elif norm in {"'none'", "'self'"}:
-                color = "blue"
-            else:
-                color = "white"
-
-            policy.items.append(
-                SourceItem(
-                    raw=item,
-                    normalized=norm,
-                    note=note,
-                    color=color,
-                    is_bypass=is_bypass_source,
-                    wildcard_kind=wild,
-                )
-            )
-
-        policies.append(policy)
-
-    warnings_dict = {
-        "missing_directives": missing_directives({p.name for p in policies}),
-        "deprecated_directives": sorted(set(deprecated_used)),
-        "unknown_directives": sorted(set(unknown_used)),
-        "unsafe_inline": has_unsafe_inline,
-        "unsafe_eval": has_unsafe_eval,
-        # Kept as the combined flag the LaTeX all-origins option is built on.
-        "wildcard_sources": has_wildcard_any or has_wildcard_partial,
-        "wildcard_any_origin": has_wildcard_any,
-        "wildcard_partial": has_wildcard_partial,
-        "data_or_blob": has_data_or_blob,
-        # report-uri is deprecated but still honoured by every current browser,
-        # so a policy that has one is not without any reporting at all.
-        "missing_report_to": not (has_report_to or has_report_uri),
-        "legacy_reporting_only": has_report_uri and not has_report_to,
-        "missing_https_and_upgrade": (
-            saw_host_source and (not has_explicit_https_source) and (not has_upgrade_insecure)
-        ),
-        "bypass_domains": bool(bypass_findings),
-        "bypass_via_catchall": catchall_script_sources,
-    }
-
-    # When the whole policy relies on http-capable host sources without pinning
-    # https (and without upgrade-insecure-requests), flag each affected plain
-    # host so the renderers can mark it. Wildcards already carry their own flag.
+    # When the policy relies on http-capable host sources without pinning https
+    # (and without upgrade-insecure-requests), flag each affected plain host so
+    # the renderers can mark it. Wildcards already carry their own flag.
     if warnings_dict["missing_https_and_upgrade"]:
-        for pol in policies:
-            for it in pol.items:
-                if is_host(it.raw) and not is_wildcard_token(it.raw):
-                    it.is_missing_https = True
+        for policy in applied:
+            for item in policy.items:
+                if is_host(item.raw) and not item.wildcard_kind:
+                    item.is_missing_https = True
 
     return URLResult(
         url=url,
         requested_url=requested_url,
         csp_raw=csp_header,
         policies=policies,
-        deprecated_used=sorted(set(deprecated_used)),
-        unknown_used=sorted(set(unknown_used)),
+        deprecated_used=warnings_dict["deprecated_directives"],
+        unknown_used=warnings_dict["unknown_directives"],
         warnings=warnings_dict,
         bypass_findings=bypass_findings,
         error=None,
@@ -2587,6 +2600,11 @@ class TextRenderer(BaseRenderer):
                 )
             if res.warnings.get("has_report_only_too"):
                 warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
+            if res.warnings.get("duplicate_directives"):
+                warn_lines.append(
+                    "[yellow]Repeated directives, only the first of each applies:[/yellow] "
+                    + ", ".join(res.warnings["duplicate_directives"])
+                )
             if res.warnings.get("missing_directives"):
                 warn_lines.append(
                     "[dark_orange]Unrestricted, nothing falls back to them:[/dark_orange] "
@@ -2681,6 +2699,8 @@ class TextRenderer(BaseRenderer):
                     directive_label += " [yellow](deprecated/legacy)[/yellow]"
                 if p.is_unknown:
                     directive_label += " [red](unknown directive)[/red]"
+                if p.is_ignored_duplicate:
+                    directive_label += " [yellow](ignored: repeated)[/yellow]"
                 if p.help_text:
                     directive_label += f" [white]— {p.help_text}[/white]"
 
@@ -2827,6 +2847,8 @@ class TextRenderer(BaseRenderer):
                     tag += " (deprecated/legacy)"
                 if p.is_unknown:
                     tag += " (unknown directive)"
+                if p.is_ignored_duplicate:
+                    tag += " (ignored: repeated)"
                 if p.help_text:
                     tag += f" — {p.help_text}"
                 lines.append(tag)
@@ -2904,6 +2926,8 @@ class JsonRenderer(BaseRenderer):
                 "name": p.name,
                 "is_deprecated": p.is_deprecated,
                 "is_unknown": p.is_unknown,
+                "is_ignored_duplicate": p.is_ignored_duplicate,
+                "policy_index": p.policy_index,
                 "help_text": p.help_text,
                 "items": [
                     {

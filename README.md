@@ -86,6 +86,40 @@ Options:
 
 ---
 
+## What it checks
+
+Every check below runs offline on the policy itself, without extra requests.
+
+| Check                    | Reported when                                                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unknown directives       | A directive name is not in the spec. A typo like `scipt-src` is ignored by the browser, so the restriction it was meant to express does not apply at all.                                                                                   |
+| Missing directives       | `base-uri`, `form-action` or `frame-ancestors` is absent. `default-src` is the fallback for the fetch directives only, so nothing covers these three. Also reported when neither `default-src` nor `script-src` restricts script execution. |
+| Repeated directives      | A directive appears twice in one policy. Browsers apply the first and ignore the rest, so only the first one counts towards the other checks.                                                                                               |
+| Unsafe keywords          | `'unsafe-inline'` or `'unsafe-eval'` is in force.                                                                                                                                                                                           |
+| Wildcards                | Any-origin sources (`*`, `https://*`) and partial ones (`*.example.com`, `wss://*.fb.com:*`) are reported separately, since they carry different risk.                                                                                      |
+| `data:` / `blob:`        | Either scheme is allowed as a source.                                                                                                                                                                                                       |
+| Known bypass domains     | A source names one of the domains in the built-in database of JSONP endpoints and script gadgets, with a PoC for each.                                                                                                                      |
+| Catch-all script sources | A script-capable directive allows `*`, `https:` or `http:`, which permits every domain in that database at once.                                                                                                                            |
+| Missing https            | Host sources are used without any `https://` source and without `upgrade-insecure-requests`.                                                                                                                                                |
+| Reporting                | Neither `report-to` nor `report-uri` is set, only the deprecated `report-uri` is set, or `report-to` names a group the response's `Reporting-Endpoints` header never defines.                                                               |
+| Deprecated directives    | The policy uses a directive that has been superseded or was never standardised.                                                                                                                                                             |
+| Not enforced             | The policy arrives only as `Content-Security-Policy-Report-Only`, or only through the obsolete `X-Content-Security-Policy` prefix that no current browser honours.                                                                          |
+
+### Multiple policies in one header
+
+A header can carry several policies separated by commas, and repeated headers are
+joined the same way. A browser enforces all of them, so only what every policy
+permits has any effect. The checks above run against that intersection: a source
+another policy blocks is marked `(no effect: blocked by another policy)` and does
+not raise a warning of its own.
+
+A policy that does not mention a resource type at all restricts nothing about it,
+so it does not cancel anything. Directive fallbacks are followed when deciding
+that, which means `default-src 'none'` in one policy does cancel `script-src-elem`
+in another.
+
+---
+
 ## Orphaned (dangling) domains
 
 A host allowlisted in a CSP whose registrable domain no longer resolves — or was

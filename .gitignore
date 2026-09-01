@@ -146,6 +146,7 @@ Sessionx.vim
 share/python-wheels/
 tags
 target/
+tasks/
 Temporary Items
 testfiles/
 Thumbs.db

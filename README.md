@@ -64,12 +64,12 @@ Options:
                                   'http://127.0.0.1:8080,https://proxy2:443'.
   --insecure                      Disable SSL certificate verification.
   -r, --redirect                  Allows redirects.
-  -t, --threads INTEGER           Max concurrent requests when fetching
-                                  multiple URLs.  [default: 20]
-  --retries INTEGER               Number of retry attempts for transient
-                                  network errors.  [default: 2]
-  --timeout FLOAT                 Per-request timeout in seconds.  [default:
-                                  15.0]
+  -t, --threads INTEGER RANGE     Max concurrent requests when fetching
+                                  multiple URLs.  [default: 20; x>=1]
+  --retries INTEGER RANGE         Number of retry attempts for transient
+                                  network errors.  [default: 2; x>=0]
+  --timeout FLOAT RANGE           Per-request timeout in seconds.  [default:
+                                  15.0; x>0]
   --check-orphans                 Resolve allowlisted domains via DNS/WHOIS
                                   and flag orphaned (unregistered, attacker-
                                   claimable) ones.
@@ -78,9 +78,9 @@ Options:
   --dns-resolvers TEXT            Comma-separated DNS resolvers used for
                                   --check-orphans/--check-hosts, tried in
                                   order.  [default: 8.8.8.8,1.1.1.1]
-  --dns-timeout FLOAT             Per-lookup DNS resolve timeout in seconds
+  --dns-timeout FLOAT RANGE       Per-lookup DNS resolve timeout in seconds
                                   for --check-orphans/--check-hosts.
-                                  [default: 3.0]
+                                  [default: 3.0; x>0]
   -h, --help                      Show this message and exit.
 ```
 
@@ -102,13 +102,15 @@ for LaTeX output — summarized together with the known bypass domains in a
 `%`-prefixed comment block appended under the generated finding.
 
 > **Note:** `--check-orphans` makes outbound DNS/WHOIS requests and is therefore
-> opt-in. It does nothing in `--csp` mode unless the flag is given.
+> opt-in. It does nothing in `--csp` mode unless the flag is given. The WHOIS step
+> only runs if the optional `python-whois` package is installed; it is not a
+> declared dependency, so by default the classification is DNS-only.
 
 ---
 
 ## Internal / non-public hosts
 
-`--check-orphans` works on the *registrable* domain of each source. That misses two
+`--check-orphans` works on the _registrable_ domain of each source. That misses two
 things: hosts with no public suffix at all (`intranet.viola.local` — `tldextract`
 cannot derive a registrable domain, so the entry is skipped), and internal hosts
 sitting under a perfectly healthy public domain (`delci1vr.dc-ratingen.de`, where the
@@ -122,13 +124,13 @@ authoritative and ends the lookup.
 
 Statuses:
 
-| Status | Meaning |
-|---|---|
-| `public` | Resolves to routable addresses. Not reported. |
-| `private-ip` | The source is, or resolves to, a non-routable address (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA). |
-| `nonpublic-tld` | No public suffix (`.local`, `.internal`, `.corp`, `.lan`, single-label names, `home.arpa`). Decided offline, no DNS query. |
-| `no-public-record` | The domain exists but the host has no public `A`/`AAAA` record — typically a split-horizon internal host. |
-| `unresolved` | No resolver answered. Inconclusive, reported but not counted as internal. |
+| Status             | Meaning                                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `public`           | Resolves to routable addresses. Not reported.                                                                              |
+| `private-ip`       | The source is, or resolves to, a non-routable address (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA).                   |
+| `nonpublic-tld`    | No public suffix (`.local`, `.internal`, `.corp`, `.lan`, single-label names, `home.arpa`). Decided offline, no DNS query. |
+| `no-public-record` | The domain exists but the host has no public `A`/`AAAA` record — typically a split-horizon internal host.                  |
+| `unresolved`       | No resolver answered. Inconclusive, reported but not counted as internal.                                                  |
 
 Why it matters: a public CSP is delivered to every visitor, so internal entries disclose
 internal host names, naming conventions and parts of the network structure, and they
@@ -186,4 +188,3 @@ _CSP_CHECK_COMPLETE=fish_source csp-check | source
 > `pipx install --force .` or `uv tool install --force .`.
 
 After adding the line, restart your shell or source the config file for the changes to take effect.
-

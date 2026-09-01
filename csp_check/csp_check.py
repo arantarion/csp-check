@@ -1503,7 +1503,11 @@ def normalize_lang(lang: Optional[str]) -> str:
 
 
 def normalize_proxy_list(proxies: str) -> dict:
-    proxy_dict = {}
+    """Map request scheme -> proxy URL. The keys are always ``http://`` and/or
+    ``https://`` because httpx matches mounts against the scheme of the
+    *request*, not the scheme of the proxy; a ``socks5://`` key would never
+    match anything and the proxy would be silently ignored."""
+    proxy_dict: Dict[str, str] = {}
     for p in proxies.split(","):
         p = p.strip()
         if not p:
@@ -1512,25 +1516,30 @@ def normalize_proxy_list(proxies: str) -> dict:
         if "://" not in p:
             p = "http://" + p
 
-        try:
-            scheme = p.split("://", 1)[0].lower()
-        except Exception:
-            scheme = "http"
+        scheme = p.split("://", 1)[0].lower()
+        if scheme in ("http", "https"):
+            proxy_dict.setdefault(f"{scheme}://", p)
+        else:
+            # socks5, socks5h, ... proxy every request scheme.
+            proxy_dict.setdefault("http://", p)
+            proxy_dict.setdefault("https://", p)
 
-        proxy_dict[f"{scheme}://"] = p
-        if scheme == "http" and "https://" not in proxy_dict:
-            proxy_dict["https://"] = p
-        elif scheme == "https" and "http://" not in proxy_dict:
-            proxy_dict["http://"] = p
+    # A single http(s) proxy is used for both request schemes.
+    if "http://" in proxy_dict and "https://" not in proxy_dict:
+        proxy_dict["https://"] = proxy_dict["http://"]
+    elif "https://" in proxy_dict and "http://" not in proxy_dict:
+        proxy_dict["http://"] = proxy_dict["https://"]
 
     return proxy_dict
 
 
-def build_proxy_mounts(proxy_dict: dict) -> Optional[dict]:
-    """Convert scheme->url proxy dict to httpx mounts dict."""
+def build_proxy_mounts(proxy_dict: dict, *, verify: bool = True) -> Optional[dict]:
+    """Convert scheme->url proxy dict to httpx mounts dict. ``verify`` has to be
+    passed through: a mounted transport does not inherit the client's TLS
+    settings, so --insecure would not apply to proxied requests."""
     if not proxy_dict:
         return None
-    return {scheme: httpx.AsyncHTTPTransport(proxy=url) for scheme, url in proxy_dict.items()}
+    return {scheme: httpx.AsyncHTTPTransport(proxy=url, verify=verify) for scheme, url in proxy_dict.items()}
 
 
 def read_urls_from_file(path: str) -> List[str]:
@@ -1612,22 +1621,28 @@ def domain_matches_bypass_domain(csp_source: str, bypass_domain: str) -> bool:
 
 def is_host(token: str) -> bool:
     """Return True for tokens that look like host/scheme sources."""
-    t = token.strip().replace("'", "")
+    t = token.strip()
     if not t:
         return False
-    if t in {"'self'", "'none'", "'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'", "'report-sample'"}:
+    # Keyword, nonce and hash sources are always single-quoted; host sources
+    # never are. Testing the quote covers every keyword, including ones added
+    # to the spec later, instead of enumerating them.
+    if t.startswith("'"):
         return False
-    if t.endswith(":"):
-        return t.lower() in {"http:", "https:"}
-    if t.startswith(("data:", "blob:", "filesystem:", "mediastream:", "ws:", "wss:")):
+    tl = t.lower()
+    if tl.endswith(":"):
+        return tl in {"http:", "https:"}
+    if tl.startswith(("data:", "blob:", "filesystem:", "mediastream:", "ws:", "wss:")):
         return False
-    if t == "*" or t.startswith(("http://", "//")):
+    if t == "*" or tl.startswith(("http://", "https://", "//")):
         return True
-    if t.lower() == "localhost":
+    if tl == "localhost":
         return True
-    if re.match(r"^\[?[0-9a-fA-F:.]+\]?(:\d+)?(/.*)?$", t):
+    # IP literals; the dot/colon test keeps bare hex-looking words ("cafe")
+    # from being read as addresses.
+    if ("." in t or ":" in t) and re.match(r"^\[?[0-9a-fA-F:.]+\]?(:\d+)?(/.*)?$", t):
         return True
-    if re.match(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d+)?(/.*)?$", t):
+    if re.match(r"^[A-Za-z0-9*.-]+\.[A-Za-z]{2,}(:\d+)?(/.*)?$", t):
         return True
     return False
 
@@ -1670,11 +1685,42 @@ def extract_csp_from_html_head(html: str) -> Optional[str]:
     return parser.csp
 
 
+def split_policies(csp_header: str) -> List[List[str]]:
+    """Split a CSP header value into policies and their directives.
+
+    A single header may carry several policies separated by commas (and httpx
+    joins repeated headers the same way); every one of them is enforced. Only
+    splitting on ``;`` would glue the last directive of one policy to the first
+    of the next and mangle both."""
+    return [[d.strip() for d in pol.split(";") if d.strip()] for pol in csp_header.split(",")]
+
+
+_LATEX_SPECIALS = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+
+def latex_escape(text: str) -> str:
+    """Escape the characters that would break a LaTeX run. URLs from the command
+    line and host names from a CSP routinely contain ``&``, ``%``, ``#`` and
+    ``_``, all of which are active characters."""
+    return "".join(_LATEX_SPECIALS.get(c, c) for c in text)
+
+
 def pretty_csp(csp_raw: str) -> str:
-    parts = [p.strip() for p in csp_raw.split(";") if p.strip()]
-    if not parts:
+    directives = [d for pol in split_policies(csp_raw) for d in pol]
+    if not directives:
         return ""
-    return ";\n".join(f"{p}" for p in parts) + ";"
+    return ";\n".join(directives) + ";"
 
 
 def highlight_csp_problems(csp_pretty: str, res: URLResult) -> str:
@@ -1740,7 +1786,8 @@ def parse_csp(
             url=url, requested_url=requested_url, csp_raw=None, error="Content-Security-Policy header not found"
         )
 
-    parts = [p.strip() for p in csp_header.split(";")]
+    policy_sets = split_policies(csp_header)
+    parts = [d for pol in policy_sets for d in pol]
 
     policies: List[Policy] = []
     deprecated_used: List[str] = []
@@ -1757,13 +1804,13 @@ def parse_csp(
     has_explicit_https_source = False
 
     for part in parts:
-        if not part:
-            continue
         tokens = [t for t in part.split() if t]
         if not tokens:
             continue
 
+        # Directive names are ASCII case-insensitive.
         name, *values = tokens
+        name = name.lower()
         p_help = T_HELP.get(name, {}).get("text")
         is_depr = name in DEPRECATED_OR_LEGACY
         if is_depr:
@@ -1777,17 +1824,17 @@ def parse_csp(
         policy = Policy(name=name, is_deprecated=is_depr, help_text=p_help)
 
         for item in values:
-            norm = item
             lower_item = item.lower()
 
-            if item.startswith("'nonce-"):
-                norm = "'nonce-'"
-            elif item.startswith("'sha256-"):
-                norm = "'sha256-'"
-            elif item.startswith("'sha384-"):
-                norm = "'sha384-'"
-            elif item.startswith("'sha512-"):
-                norm = "'sha512-'"
+            # Keywords and scheme sources are case-insensitive; only the payload
+            # of a nonce/hash is not, and that is collapsed into the prefix
+            # anyway. Host sources keep their original spelling for display.
+            if lower_item.startswith(("'nonce-", "'sha256-", "'sha384-", "'sha512-")):
+                norm = lower_item.split("-", 1)[0] + "-'"
+            elif item.startswith("'") or (lower_item.endswith(":") and "//" not in lower_item):
+                norm = lower_item
+            else:
+                norm = item
 
             if is_host(item):
                 saw_host_source = True
@@ -1802,7 +1849,7 @@ def parse_csp(
                 has_wildcard = True
             if norm in {"data:", "blob:"}:
                 has_data_or_blob = True
-            if norm == "https:" or lower_item.startswith("https://"):
+            if norm == "https:" or lower_item.startswith("https://") or lower_item.startswith("wss://"):
                 has_explicit_https_source = True
 
             is_bypass_source = False
@@ -1963,9 +2010,12 @@ def _resolve_domain_status_sync(
         except Exception:
             return DomainStatus.OTHER
 
-    r = _dns_resolver.Resolver()
+    try:
+        r = _dns_resolver.Resolver(configure=not dns_resolvers)
+    except Exception:
+        return DomainStatus.UNKNOWN
     if dns_resolvers:
-        r.nameservers = dns_resolvers
+        r.nameservers = list(dns_resolvers)
     r.lifetime = dns_timeout
     r.timeout = dns_timeout
 
@@ -2102,7 +2152,11 @@ HOST_STATUS_HELP: Dict[HostStatus, str] = {
 def _classify_addresses(addresses: List[str]) -> HostStatus:
     """PRIVATE_IP when every resolved address is non-routable (RFC1918, loopback,
     link-local, CGNAT, IPv6 ULA), PUBLIC otherwise."""
-    if all(not ipaddress.ip_address(a).is_global for a in addresses):
+    if not addresses:
+        return HostStatus.UNRESOLVED
+    # getaddrinfo appends a scope id to link-local IPv6 ("fe80::1%eth0"), which
+    # ip_address() rejects.
+    if all(not ipaddress.ip_address(a.partition("%")[0]).is_global for a in addresses):
         return HostStatus.PRIVATE_IP
     return HostStatus.PUBLIC
 
@@ -2145,7 +2199,10 @@ def _resolve_host_sync(
 
     nameservers: List[Optional[str]] = list(dns_resolvers) if dns_resolvers else [None]
     for nameserver in nameservers:
-        r = _dns_resolver.Resolver(configure=nameserver is None)
+        try:
+            r = _dns_resolver.Resolver(configure=nameserver is None)
+        except Exception:
+            continue
         if nameserver:
             r.nameservers = [nameserver]
         r.lifetime = dns_timeout
@@ -2250,12 +2307,19 @@ async def annotate_internal_hosts(
             res.warnings["internal_hosts"] = True
 
 
+def _describe_exc(prefix: str, exc: Optional[BaseException]) -> str:
+    """httpx connect/read timeouts stringify to an empty message, which would
+    leave the user with a bare "Request failed:"."""
+    detail = str(exc) if exc else ""
+    return f"{prefix}: {type(exc).__name__}{f' ({detail})' if detail else ''}" if exc else f"{prefix}: unknown error"
+
+
 async def fetch_csp(
     url: str,
     *,
     cookies: Dict[str, str],
-    headers: Dict[str, str] = {},
-    proxies: Dict = {},
+    headers: Optional[Dict[str, str]] = None,
+    proxies: Optional[Dict] = None,
     is_secure: bool = True,
     redirect: bool = False,
     client: Optional[httpx.AsyncClient] = None,
@@ -2267,10 +2331,10 @@ async def fetch_csp(
     url = normalize_url(url)
 
     owns_client = client is None
-    if owns_client:
-        mounts = build_proxy_mounts(proxies)
+    if client is None:
+        mounts = build_proxy_mounts(proxies or {}, verify=is_secure)
         client_kwargs: dict = dict(
-            headers={"User-Agent": USER_AGENT, **headers},
+            headers={"User-Agent": USER_AGENT, **(headers or {})},
             cookies=cookies or {},
             verify=is_secure,
             follow_redirects=redirect,
@@ -2289,10 +2353,18 @@ async def fetch_csp(
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 last_exc = e
                 if attempt >= max_retries:
-                    return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
+                    return URLResult(
+                        url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", e)
+                    )
                 await asyncio.sleep(backoff_base * (2**attempt))
         else:
-            return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {last_exc}")
+            return URLResult(
+                url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", last_exc)
+            )
+
+        # With --redirect the response comes from the final hop; report that
+        # URL instead of the one originally requested.
+        url = str(resp.url)
 
         csp_header = resp.headers.get("Content-Security-Policy")
         if not csp_header:
@@ -2316,7 +2388,7 @@ async def fetch_csp(
         return result
 
     except Exception as e:
-        return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=f"Request failed: {e}")
+        return URLResult(url=url, requested_url=requested_url, csp_raw=None, error=_describe_exc("Request failed", e))
     finally:
         if owns_client:
             await client.aclose()
@@ -2326,8 +2398,8 @@ async def fetch_multiple_csps(
     urls: Sequence[str],
     *,
     cookies: Dict[str, str],
-    headers: Dict[str, str] = {},
-    proxies: Dict = {},
+    headers: Optional[Dict[str, str]] = None,
+    proxies: Optional[Dict] = None,
     is_secure: bool = True,
     redirect: bool = False,
     concurrency: int = 20,
@@ -2335,9 +2407,9 @@ async def fetch_multiple_csps(
     max_retries: int = 2,
 ) -> List[URLResult]:
     sem = asyncio.Semaphore(concurrency)
-    mounts = build_proxy_mounts(proxies)
+    mounts = build_proxy_mounts(proxies or {}, verify=is_secure)
     client_kwargs: dict = dict(
-        headers={"User-Agent": USER_AGENT, **headers},
+        headers={"User-Agent": USER_AGENT, **(headers or {})},
         cookies=cookies or {},
         verify=is_secure,
         follow_redirects=redirect,
@@ -2626,6 +2698,20 @@ class TextRenderer(BaseRenderer):
         return "\n".join(lines)
 
 
+class RawRenderer(BaseRenderer):
+    def render_many(self, results: List[URLResult]) -> str:
+        lines: List[str] = []
+        multi = len(results) > 1
+        for res in results:
+            if multi:
+                lines.append(f"# {res.requested_url}")
+            if res.csp_raw:
+                lines.append(pretty_csp(res.csp_raw))
+            else:
+                lines.append(f"# {res.error or 'Content-Security-Policy header not found'}")
+        return "\n".join(lines)
+
+
 class JsonRenderer(BaseRenderer):
     def render_many(self, results: List[URLResult]) -> str:
         def policy_to_dict(p: Policy) -> Dict:
@@ -2697,6 +2783,10 @@ class JsonRenderer(BaseRenderer):
         return json.dumps(payload, indent=2, sort_keys=False)
 
 
+# Canonical column/attribute order of the `probleme=` baustein options.
+PROBLEM_ORDER = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
+
+
 class LatexRenderer(BaseRenderer):
     def __init__(self, lang: str = "en"):
         self.lang = normalize_lang(lang)
@@ -2726,8 +2816,7 @@ class LatexRenderer(BaseRenderer):
         # if res.warnings.get("bypass_domains"):
         #     problems.append("bypass")
 
-        order = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
-        return [p for p in order if p in problems]
+        return [p for p in PROBLEM_ORDER if p in problems]
 
     def _findings_comment(self, results: List[URLResult]) -> str:
         """Build a LaTeX comment block listing the bypassable and orphaned
@@ -2777,7 +2866,7 @@ class LatexRenderer(BaseRenderer):
         de = self.lang == "de"
 
         def tt(items: List[str]) -> str:
-            return ", ".join(rf"\texttt{{{i}}}" for i in items)
+            return ", ".join(rf"\texttt{{{latex_escape(i)}}}" for i in items)
 
         bypasses = sorted({bf.bypass_domain for r in results for bf in r.bypass_findings})
         orphans = sorted({of.fld for r in results for of in r.orphan_findings})
@@ -3024,13 +3113,8 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         if all_no_csp:
             return self._block_no_csp(plural=True)
 
-        cumulative: List[str] = []
-        for r in results:
-            if r.error or not r.csp_raw:
-                continue
-            for p in self._problems_list(r):
-                if p not in cumulative:
-                    cumulative.append(p)
+        seen_problems = {p for r in results if not (r.error or not r.csp_raw) for p in self._problems_list(r)}
+        cumulative: List[str] = [p for p in PROBLEM_ORDER if p in seen_problems]
 
         problems_braced = "{" + ",".join(cumulative) + "}"
 
@@ -3067,8 +3151,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         )
 
         for r in results:
-            url_label = r.requested_url
-            row_cells: List[str] = [url_label]
+            row_cells: List[str] = [rf"\texttt{{{latex_escape(r.requested_url)}}}"]
 
             if r.error or not r.csp_raw:
                 for _ in cumulative:
@@ -3104,7 +3187,7 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     """
     Show a Rich-styled prompt that lets the user paste a CSP.
     """
-    console = Console()
+    console = Console(stderr=True)
     console.print(
         Panel.fit(
             Text.from_markup(
@@ -3142,6 +3225,36 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     return csp
 
 
+def emit_results(results: List[URLResult], *, fmt: str, output: Optional[str], lang: str) -> None:
+    """Render `results` in `fmt` and either write them to `output` or print
+    them. Used by every input mode so that --format/--output behave the same
+    whether the CSP was fetched or pasted."""
+    if fmt == "json":
+        renderer: BaseRenderer = JsonRenderer()
+    elif fmt == "latex":
+        renderer = LatexRenderer(lang=lang)
+    elif fmt == "raw":
+        renderer = RawRenderer()
+    else:
+        renderer = TextRenderer(console=None)
+
+    if output:
+        try:
+            content = renderer.render_many(results)
+            with open(output, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except OSError as e:
+            console.print(f"[red]Failed to write output:[/red] {e}")
+            sys.exit(3)
+        console.print(f"[green]Wrote output to[/green] {output}")
+        return
+
+    if fmt == "text":
+        TextRenderer(console=console).print_to_console(results)
+    else:
+        print(renderer.render_many(results))
+
+
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("-u", "--url", default=None, help="Single URL/domain to check.")
 @click.option("-f", "--file", "file_path", default=None, help="Path to a file with one URL per line.")
@@ -3173,13 +3286,23 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     "--threads",
     default=20,
     show_default=True,
-    type=int,
+    type=click.IntRange(min=1),
     help="Max concurrent requests when fetching multiple URLs.",
 )
 @click.option(
-    "--retries", default=2, show_default=True, type=int, help="Number of retry attempts for transient network errors."
+    "--retries",
+    default=2,
+    show_default=True,
+    type=click.IntRange(min=0),
+    help="Number of retry attempts for transient network errors.",
 )
-@click.option("--timeout", default=15.0, show_default=True, type=float, help="Per-request timeout in seconds.")
+@click.option(
+    "--timeout",
+    default=15.0,
+    show_default=True,
+    type=click.FloatRange(min=0, min_open=True),
+    help="Per-request timeout in seconds.",
+)
 @click.option(
     "--check-orphans",
     is_flag=True,
@@ -3202,7 +3325,7 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     "--dns-timeout",
     default=3.0,
     show_default=True,
-    type=float,
+    type=click.FloatRange(min=0, min_open=True),
     help="Per-lookup DNS resolve timeout in seconds for --check-orphans/--check-hosts.",
 )
 def main(
@@ -3261,7 +3384,7 @@ def main(
                     [result], dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout
                 )
             )
-        TextRenderer(console=Console()).print_to_console([result])
+        emit_results([result], fmt=fmt, output=output, lang=lang)
         return
 
     if url:
@@ -3273,10 +3396,9 @@ def main(
             console.print(f"[red]Failed to read file:[/red] {e}")
             sys.exit(2)
 
-    if (fmt == "text" or fmt is None) and len(urls) > 1:
-        print_choice = input(f"Do you really want to print {len(urls)} results in your terminal? (Y/n): ")
-        if not (print_choice.lower() == "y" or print_choice == ""):
-            print("Try one of the other output methods with --format [raw, json, latex]")
+    if fmt == "text" and not output and len(urls) > 1 and sys.stdin.isatty():
+        if not click.confirm(f"Do you really want to print {len(urls)} results in your terminal?", default=True):
+            console.print("Try one of the other output methods with --format [raw, json, latex]")
             sys.exit(1)
 
     proxies = normalize_proxy_list(proxy) if proxy else {}
@@ -3305,36 +3427,7 @@ def main(
             annotate_internal_hosts(results, dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
         )
 
-    if output:
-        if fmt == "json":
-            renderer: BaseRenderer = JsonRenderer()
-        elif fmt == "latex":
-            renderer = LatexRenderer(lang=lang)
-        else:
-            renderer = TextRenderer(console=None)
-
-        try:
-            content = renderer.render_many(results)
-            with open(output, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            console.print(f"[green]Wrote output to[/green] {output}")
-        except Exception as e:
-            console.print(f"[red]Failed to write output:[/red] {e}")
-            sys.exit(3)
-    else:
-        if fmt == "latex":
-            content = LatexRenderer(lang=lang).render_many(results)
-            print(content)
-        elif fmt == "raw":
-            for res in results:
-                content = pretty_csp(res.csp_raw) if res else ""  # type: ignore
-                print(content)
-        elif fmt == "json":
-            renderer = JsonRenderer()
-            content = renderer.render_many(results)
-            print(content)
-        else:
-            TextRenderer(console=console).print_to_console(results)
+    emit_results(results, fmt=fmt, output=output, lang=lang)
 
 
 if __name__ == "__main__":

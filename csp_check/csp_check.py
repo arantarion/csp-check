@@ -173,6 +173,11 @@ KNOWN_DIRECTIVES: Set[str] = {
     k for k in T_HELP if not k.startswith("'") and not k.endswith(":") and k != "*"
 } | DEPRECATED_OR_LEGACY
 
+# default-src is the fallback for the fetch directives only. Nothing falls back
+# to these three, so leaving one out leaves it unrestricted no matter how strict
+# the rest of the policy is.
+NO_FALLBACK_DIRECTIVES = ("base-uri", "form-action", "frame-ancestors")
+
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {
         "risks": ["exec"],
@@ -1593,6 +1598,19 @@ def parse_headers(header_str: Optional[str]) -> Dict[str, str]:
     return hdrs
 
 
+def missing_directives(names: Set[str]) -> List[str]:
+    """Directives whose absence leaves something unrestricted.
+
+    Script execution is covered by `default-src` or `script-src`, or by
+    `script-src-elem` and `script-src-attr` together: `script-src-elem` alone
+    still leaves inline event handlers unrestricted."""
+    missing = [d for d in NO_FALLBACK_DIRECTIVES if d not in names]
+    script_covered = "default-src" in names or "script-src" in names or {"script-src-elem", "script-src-attr"} <= names
+    if not script_covered:
+        missing.append("script-src")
+    return missing
+
+
 def is_wildcard_token(token: str) -> bool:
     if token == "*":
         return True
@@ -1912,6 +1930,7 @@ def parse_csp(
         policies.append(policy)
 
     warnings_dict = {
+        "missing_directives": missing_directives({p.name for p in policies}),
         "deprecated_directives": sorted(set(deprecated_used)),
         "unknown_directives": sorted(set(unknown_used)),
         "unsafe_inline": has_unsafe_inline,
@@ -2507,6 +2526,11 @@ class TextRenderer(BaseRenderer):
                 )
             if res.warnings.get("has_report_only_too"):
                 warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
+            if res.warnings.get("missing_directives"):
+                warn_lines.append(
+                    "[dark_orange]Unrestricted, nothing falls back to them:[/dark_orange] "
+                    + ", ".join(res.warnings["missing_directives"])  # type: ignore
+                )
             if res.warnings.get("deprecated_directives"):
                 warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))  # type: ignore
             if res.unknown_used:
@@ -2698,6 +2722,12 @@ class TextRenderer(BaseRenderer):
                 )
                 lines.append("")
 
+            if res.warnings.get("missing_directives"):
+                lines.append(
+                    "Unrestricted, nothing falls back to them: " + ", ".join(res.warnings["missing_directives"])  # type: ignore
+                )
+                lines.append("")
+
             if res.deprecated_used:
                 lines.append("Deprecated/legacy directives present: " + ", ".join(res.deprecated_used))
                 lines.append("")
@@ -2865,10 +2895,9 @@ class LatexRenderer(BaseRenderer):
         self.lang = normalize_lang(lang)
 
     def _problems_list(self, res: URLResult) -> List[str]:
-        names = {p.name for p in res.policies}
         problems: List[str] = []
 
-        if "default-src" not in names:
+        if res.warnings.get("missing_directives"):
             problems.append("missing-directive")
 
         if res.warnings.get("unsafe_inline") or res.warnings.get("unsafe_eval"):

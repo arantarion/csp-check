@@ -1496,6 +1496,7 @@ class URLResult:
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
     host_findings: List[HostFinding] = field(default_factory=list)
     report_only: bool = False
+    legacy_header: bool = False
     reporting_endpoints_present: Optional[bool] = None
     error: Optional[str] = None
 
@@ -1760,7 +1761,16 @@ def latex_escape(text: str) -> str:
     return "".join(_LATEX_SPECIALS.get(c, c) for c in text)
 
 
-def pretty_csp(csp_raw: str) -> str:
+def has_effective_csp(res: URLResult) -> bool:
+    """False when the result carries no policy a browser would enforce. A policy
+    delivered only through X-Content-Security-Policy counts as none: the prefix
+    was an IE10/old-Firefox extension and is ignored today."""
+    return bool(res.csp_raw) and not res.error and not res.legacy_header
+
+
+def pretty_csp(csp_raw: Optional[str]) -> str:
+    if not csp_raw:
+        return ""
     directives = [d for pol in split_policies(csp_raw) for d in pol]
     if not directives:
         return ""
@@ -2449,15 +2459,18 @@ async def fetch_csp(
         url = str(resp.url)
 
         csp_header = resp.headers.get("Content-Security-Policy")
+        legacy_header = False
+
+        # A policy in a <meta> tag is enforced, so it takes precedence over the
+        # X-Content-Security-Policy prefix, which no current browser honours.
+        if not csp_header:
+            csp_header = extract_csp_from_html_head(resp.text)
+
         if not csp_header:
             csp_header = resp.headers.get("X-Content-Security-Policy")
+            legacy_header = bool(csp_header)
 
         report_only_header = resp.headers.get("Content-Security-Policy-Report-Only")
-
-        if not csp_header:
-            csp_from_meta = extract_csp_from_html_head(resp.text)
-            if csp_from_meta:
-                csp_header = csp_from_meta
 
         if not csp_header and report_only_header:
             result = parse_csp(report_only_header, url, requested_url)
@@ -2468,6 +2481,9 @@ async def fetch_csp(
         result = parse_csp(csp_header, url, requested_url)
         if report_only_header:
             result.warnings["has_report_only_too"] = True
+        if legacy_header:
+            result.legacy_header = True
+            result.warnings["legacy_header_only"] = True
         annotate_reporting_endpoint(result, resp.headers)
         return result
 
@@ -2538,6 +2554,8 @@ class TextRenderer(BaseRenderer):
     def print_to_console(self, results: List[URLResult]) -> None:
         for res in results:
             ro_badge = " [yellow](report-only)[/yellow]" if res.report_only else ""
+            if res.legacy_header:
+                ro_badge += " [red](X-Content-Security-Policy)[/red]"
             header = Text.from_markup(f"[bold]{res.requested_url}[/bold] — Fetched: [cyan]{res.url}[/cyan]{ro_badge}")
             self.console.print(Panel(header, expand=False, box=box.ROUNDED))  # type: ignore
 
@@ -2550,6 +2568,12 @@ class TextRenderer(BaseRenderer):
             if res.report_only:
                 warn_lines.append(
                     "[yellow]This is a [bold]report-only[/bold] CSP — violations are reported but not enforced.[/yellow]"
+                )
+            if res.legacy_header:
+                warn_lines.append(
+                    "[red]This policy is only served via [bold]X-Content-Security-Policy[/bold], a prefix no "
+                    "current browser honours. It is [bold]not enforced[/bold]; the application effectively has "
+                    "no CSP.[/red]"
                 )
             if res.warnings.get("has_report_only_too"):
                 warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
@@ -2741,6 +2765,12 @@ class TextRenderer(BaseRenderer):
                 lines.append("")
                 continue
 
+            if res.legacy_header:
+                lines.append(
+                    "NOTE: This policy is only served via X-Content-Security-Policy, a prefix no current "
+                    "browser honours. It is not enforced."
+                )
+                lines.append("")
             if res.report_only:
                 lines.append("NOTE: This is a report-only CSP — violations are reported but not enforced.")
                 lines.append("")
@@ -2906,6 +2936,7 @@ class JsonRenderer(BaseRenderer):
                 "deprecated_used": r.deprecated_used,
                 "unknown_used": r.unknown_used,
                 "report_only": r.report_only,
+                "legacy_header": r.legacy_header,
                 "reporting_endpoints_present": r.reporting_endpoints_present,
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
@@ -2993,6 +3024,23 @@ class LatexRenderer(BaseRenderer):
         lines.append(sep)
         return "\n".join(lines)
 
+    def _legacy_header_comment(self, results: List[URLResult]) -> str:
+        """Note the policies that exist but are served through the obsolete
+        prefixed header, so the no-CSP finding above can be justified."""
+        rows = [f"%   {r.requested_url}: {r.csp_raw}" for r in results if r.legacy_header]
+        if not rows:
+            return ""
+        sep = "% " + "-" * 73
+        return "\n\n" + "\n".join(
+            [
+                sep,
+                "% A policy is present, but only in the obsolete X-Content-Security-Policy",
+                "% header, which no current browser honours. It is therefore not enforced:",
+                *rows,
+                sep,
+            ]
+        )
+
     def _extra_sections(self, results: List[URLResult]) -> str:
         """Prose paragraphs (DE/EN) explaining the problem classes that have no
         dedicated `probleme=` group in the template — known bypasses, orphaned
@@ -3003,7 +3051,7 @@ class LatexRenderer(BaseRenderer):
         def tt(items: List[str]) -> str:
             return ", ".join(rf"\texttt{{{latex_escape(i)}}}" for i in items)
 
-        bypasses = sorted({bf.bypass_domain for r in results for bf in r.bypass_findings})
+        bypasses = sorted({bf.bypass_domain for r in results if has_effective_csp(r) for bf in r.bypass_findings})
         orphans = sorted({of.fld for r in results for of in r.orphan_findings})
         internal_hosts = sorted(
             {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
@@ -3230,8 +3278,8 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         if len(results) == 1:
             res = results[0]
-            if res.error or not res.csp_raw:
-                return self._block_no_csp()
+            if not has_effective_csp(res):
+                return self._block_no_csp() + self._legacy_header_comment([res])
 
             formatted = pretty_csp(res.csp_raw)
             formatted = highlight_csp_problems(formatted, res)
@@ -3259,12 +3307,12 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
                 parts.append(comment)
             return "\n\n".join(parts)
 
-        all_no_csp = all((r.error or not r.csp_raw) for r in results)
+        all_no_csp = all(not has_effective_csp(r) for r in results)
 
         if all_no_csp:
-            return self._block_no_csp(plural=True)
+            return self._block_no_csp(plural=True) + self._legacy_header_comment(results)
 
-        seen_problems = {p for r in results if not (r.error or not r.csp_raw) for p in self._problems_list(r)}
+        seen_problems = {p for r in results if has_effective_csp(r) for p in self._problems_list(r)}
         cumulative: List[str] = [p for p in PROBLEM_ORDER if p in seen_problems]
 
         problems_braced = "{" + ",".join(cumulative) + "}"
@@ -3304,7 +3352,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
         for r in results:
             row_cells: List[str] = [rf"\texttt{{{latex_escape(r.requested_url)}}}"]
 
-            if r.error or not r.csp_raw:
+            if not has_effective_csp(r):
                 for _ in cumulative:
                     row_cells.append("")
                 row_cells.append(r"\flash")

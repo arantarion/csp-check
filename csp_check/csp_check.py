@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import ipaddress
 import json
 import re
 import socket
@@ -1427,6 +1428,9 @@ class SourceItem:
     is_bypass: bool = False
     is_orphan: bool = False
     orphan_status: Optional[str] = None
+    is_internal: bool = False
+    host_status: Optional[str] = None
+    resolved_addresses: List[str] = field(default_factory=list)
     is_missing_https: bool = False
 
 
@@ -1457,6 +1461,15 @@ class OrphanFinding:
 
 
 @dataclass
+class HostFinding:
+    directive: str
+    source_raw: str
+    host: str
+    status: str
+    addresses: List[str]
+
+
+@dataclass
 class URLResult:
     url: str
     requested_url: str
@@ -1466,6 +1479,7 @@ class URLResult:
     warnings: Dict[str, object] = field(default_factory=dict)
     bypass_findings: List[BypassFinding] = field(default_factory=list)
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
+    host_findings: List[HostFinding] = field(default_factory=list)
     report_only: bool = False
     error: Optional[str] = None
 
@@ -1888,9 +1902,16 @@ def extract_host_from_source(item: str) -> Optional[str]:
     schemes, nonces, hashes and other non-host expressions."""
     if not item:
         return None
-    raw = _HOST_QUOTE_RE.sub("", item.strip())
+    stripped = item.strip()
+    # Keyword, nonce and hash sources are always single-quoted; host sources
+    # never are. Testing the quotes covers every keyword, including ones added
+    # to the spec later, instead of enumerating them.
+    if stripped.startswith("'"):
+        return None
+    raw = _HOST_QUOTE_RE.sub("", stripped)
     raw_low = raw.lower()
 
+    # Tolerate policies that write keywords without the required quotes.
     if raw_low in {"*", "self", "none", "unsafe-inline", "unsafe-eval", "strict-dynamic", "report-sample"}:
         return None
     if raw_low.endswith(":"):
@@ -1906,7 +1927,13 @@ def extract_host_from_source(item: str) -> Optional[str]:
         raw = raw.split("://", 1)[1]
     host = raw.split("/", 1)[0]
     host = host.split("@")[-1]
-    host = host.split(":", 1)[0]
+    if host.startswith("["):
+        # Bracketed IPv6 literal: the address itself is full of colons, so the
+        # port can only be split off after the closing bracket.
+        addr, _, _ = host[1:].partition("]")
+        host = addr
+    else:
+        host = host.split(":", 1)[0]
     return host.lower() if host else None
 
 
@@ -2042,6 +2069,185 @@ async def annotate_orphans(
                     )
         if res.orphan_findings:
             res.warnings["orphan_domains"] = True
+
+
+# ---------------------------------------
+# Internal / non-public host detection
+# ---------------------------------------
+
+
+class HostStatus(str, Enum):
+    PUBLIC = "public"
+    PRIVATE_IP = "private-ip"
+    NONPUBLIC_TLD = "nonpublic-tld"
+    NO_PUBLIC_RECORD = "no-public-record"
+    UNRESOLVED = "unresolved"
+
+
+INTERNAL_HOST_STATUSES = (HostStatus.PRIVATE_IP, HostStatus.NONPUBLIC_TLD, HostStatus.NO_PUBLIC_RECORD)
+INTERNAL_HOST_STATUS_VALUES = {s.value for s in INTERNAL_HOST_STATUSES}
+
+# Suffixes that are listed in the Public Suffix List but are reserved for
+# private/internal use, so tldextract alone would call them public.
+PRIVATE_USE_SUFFIXES = {"home.arpa", "localhost"}
+
+HOST_STATUS_HELP: Dict[HostStatus, str] = {
+    HostStatus.PRIVATE_IP: "resolves to a non-routable address",
+    HostStatus.NONPUBLIC_TLD: "no public suffix (internal-only name)",
+    HostStatus.NO_PUBLIC_RECORD: "no public A/AAAA record",
+    HostStatus.UNRESOLVED: "no resolver answered",
+}
+
+
+def _classify_addresses(addresses: List[str]) -> HostStatus:
+    """PRIVATE_IP when every resolved address is non-routable (RFC1918, loopback,
+    link-local, CGNAT, IPv6 ULA), PUBLIC otherwise."""
+    if all(not ipaddress.ip_address(a).is_global for a in addresses):
+        return HostStatus.PRIVATE_IP
+    return HostStatus.PUBLIC
+
+
+def _resolve_host_sync(
+    host: str, dns_resolvers: Optional[List[str]] = None, dns_timeout: float = 3.0, is_wildcard: bool = False
+) -> tuple[HostStatus, List[str]]:
+    """Classify a single CSP host. Literal addresses and names without a public
+    suffix are decided offline; everything else is looked up via the given
+    resolvers, which are tried in order and only advanced past on a transient
+    failure."""
+    if not host:
+        return HostStatus.UNRESOLVED, []
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return (HostStatus.PUBLIC if ip.is_global else HostStatus.PRIVATE_IP), [str(ip)]
+
+    te = tldextract.extract(host)
+    if not te.suffix or te.suffix in PRIVATE_USE_SUFFIXES:
+        return HostStatus.NONPUBLIC_TLD, []
+
+    # A wildcard source has no resolvable name of its own; the apex frequently
+    # carries no A/AAAA record, which would be a false positive.
+    if is_wildcard:
+        return HostStatus.PUBLIC, []
+
+    if not HAVE_DNSPY:
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return HostStatus.NO_PUBLIC_RECORD, []
+        except Exception:
+            return HostStatus.UNRESOLVED, []
+        found = sorted({str(info[4][0]) for info in infos})
+        return _classify_addresses(found), found
+
+    nameservers: List[Optional[str]] = list(dns_resolvers) if dns_resolvers else [None]
+    for nameserver in nameservers:
+        r = _dns_resolver.Resolver(configure=nameserver is None)
+        if nameserver:
+            r.nameservers = [nameserver]
+        r.lifetime = dns_timeout
+        r.timeout = dns_timeout
+
+        addresses: Set[str] = set()
+        authoritative_empty = False
+        transient = False
+        for rtype in ("A", "AAAA"):
+            try:
+                addresses.update(rr.address for rr in r.resolve(host, rtype))
+            except NXDOMAIN:
+                return HostStatus.NO_PUBLIC_RECORD, []
+            except NoAnswer:
+                authoritative_empty = True
+            except Exception:
+                transient = True
+
+        if addresses:
+            found = sorted(addresses)
+            return _classify_addresses(found), found
+        if authoritative_empty and not transient:
+            return HostStatus.NO_PUBLIC_RECORD, []
+
+    return HostStatus.UNRESOLVED, []
+
+
+async def build_host_health_map(
+    hosts: Dict[str, bool], dns_resolvers: Optional[List[str]] = None, concurrency: int = 50, dns_timeout: float = 3.0
+) -> Dict[str, tuple[HostStatus, List[str]]]:
+    """Resolve every host once. Keys are hostnames, values whether the host was
+    only ever seen as a wildcard source."""
+    results: Dict[str, tuple[HostStatus, List[str]]] = {}
+    if not hosts:
+        return results
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(concurrency)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+
+        async def task(h: str, wildcard: bool):
+            async with sem:
+                func = partial(_resolve_host_sync, h, dns_resolvers, dns_timeout, wildcard)
+                results[h] = await loop.run_in_executor(pool, func)
+
+        await asyncio.gather(*(task(h, w) for h, w in hosts.items()))
+    return results
+
+
+async def annotate_internal_hosts(
+    results: List[URLResult],
+    *,
+    dns_resolvers: Optional[List[str]] = None,
+    concurrency: int = 50,
+    dns_timeout: float = 3.0,
+) -> None:
+    """Resolve every host referenced across all results once, then mark the
+    source items whose host is internal-only or has no public record."""
+    hosts: Dict[str, bool] = {}
+    for res in results:
+        if res.error or not res.csp_raw:
+            continue
+        for p in res.policies:
+            for it in p.items:
+                host = extract_host_from_source(it.raw)
+                if not host:
+                    continue
+                wildcard = is_wildcard_token(it.raw)
+                hosts[host] = hosts.get(host, True) and wildcard
+
+    health = await build_host_health_map(
+        hosts, dns_resolvers=dns_resolvers, concurrency=concurrency, dns_timeout=dns_timeout
+    )
+
+    for res in results:
+        if res.error or not res.csp_raw:
+            continue
+        seen: Set = set()
+        for p in res.policies:
+            for it in p.items:
+                host = extract_host_from_source(it.raw)
+                if not host or host not in health:
+                    continue
+                status, addresses = health[host]
+                it.host_status = status.value
+                it.resolved_addresses = addresses
+                if status == HostStatus.PUBLIC:
+                    continue
+                it.is_internal = status in INTERNAL_HOST_STATUSES
+                key = (p.name, it.raw, host)
+                if key not in seen:
+                    seen.add(key)
+                    res.host_findings.append(
+                        HostFinding(
+                            directive=p.name,
+                            source_raw=it.raw,
+                            host=host,
+                            status=status.value,
+                            addresses=addresses,
+                        )
+                    )
+        if any(f.status in INTERNAL_HOST_STATUS_VALUES for f in res.host_findings):
+            res.warnings["internal_hosts"] = True
 
 
 async def fetch_csp(
@@ -2219,6 +2425,14 @@ class TextRenderer(BaseRenderer):
                     f"domains an attacker could claim (likely typos) — see Orphan Domains below.[/magenta]"
                 )
 
+            if res.warnings.get("internal_hosts"):
+                internal = [f for f in res.host_findings if f.status != HostStatus.UNRESOLVED.value]
+                warn_lines.append(
+                    f"[cyan bold]Internal / non-public host(s) detected![/cyan bold] "
+                    f"[cyan]{len(internal)} allowlisted source(s) do not resolve publicly — the policy leaks "
+                    f"internal infrastructure names — see Internal / Non-Public Hosts below.[/cyan]"
+                )
+
             if warn_lines:
                 self.console.print(  # type: ignore
                     Panel(
@@ -2256,8 +2470,17 @@ class TextRenderer(BaseRenderer):
                     https_mark = " [dim](missing https)[/dim]" if it.is_missing_https else ""
                     bypass_mark = " [bright_red bold][BYPASS][/bright_red bold]" if it.is_bypass else ""
                     orphan_mark = f" [magenta bold][ORPHAN: {it.orphan_status}][/magenta bold]" if it.is_orphan else ""
-                    item_color = "magenta" if it.is_orphan and not it.is_bypass else it.color
-                    value = f"[{item_color}]{it.raw}[/{item_color}]{https_mark}{expl}{bypass_mark}{orphan_mark}"
+                    internal_mark = f" [cyan bold][INTERNAL: {it.host_status}][/cyan bold]" if it.is_internal else ""
+                    if it.is_orphan and not it.is_bypass:
+                        item_color = "magenta"
+                    elif it.is_internal and not it.is_bypass:
+                        item_color = "cyan"
+                    else:
+                        item_color = it.color
+                    value = (
+                        f"[{item_color}]{it.raw}[/{item_color}]{https_mark}{expl}"
+                        f"{bypass_mark}{orphan_mark}{internal_mark}"
+                    )
                     table.add_row(directive_label if first else "", value)
                     first = False
 
@@ -2297,6 +2520,25 @@ class TextRenderer(BaseRenderer):
                         "\n".join(orphan_lines),
                         title="[magenta bold]Orphan Domains[/magenta bold]",
                         border_style="magenta",
+                        box=box.ROUNDED,
+                    )
+                )
+
+            if res.host_findings:
+                host_lines = []
+                for hf in res.host_findings:
+                    status = HostStatus(hf.status)
+                    addrs = f" [dim]({', '.join(hf.addresses)})[/dim]" if hf.addresses else ""
+                    host_lines.append(
+                        f"[bold]{hf.directive}[/bold]: [cyan]{hf.source_raw}[/cyan] "
+                        f"→ [yellow]{hf.host}[/yellow] is [cyan]{hf.status}[/cyan]"
+                        f" — {HOST_STATUS_HELP[status]}{addrs}"
+                    )
+                self.console.print(  # type: ignore
+                    Panel(
+                        "\n".join(host_lines),
+                        title="[cyan bold]Internal / Non-Public Hosts[/cyan bold]",
+                        border_style="cyan",
                         box=box.ROUNDED,
                     )
                 )
@@ -2348,7 +2590,8 @@ class TextRenderer(BaseRenderer):
                     https_mark = " (missing https)" if it.is_missing_https else ""
                     bypass_mark = " [BYPASS]" if it.is_bypass else ""
                     orphan_mark = f" [ORPHAN: {it.orphan_status}]" if it.is_orphan else ""
-                    lines.append(f"  + {it.raw}{https_mark}{expl}{bypass_mark}{orphan_mark}")
+                    internal_mark = f" [INTERNAL: {it.host_status}]" if it.is_internal else ""
+                    lines.append(f"  + {it.raw}{https_mark}{expl}{bypass_mark}{orphan_mark}{internal_mark}")
                 lines.append("")
 
             if res.bypass_findings:
@@ -2367,6 +2610,16 @@ class TextRenderer(BaseRenderer):
                 lines.append("--- ORPHAN DOMAINS (claimable by an attacker) ---")
                 for of in res.orphan_findings:
                     lines.append(f"  {of.directive}: {of.source_raw} -> registrable domain {of.fld} ({of.status})")
+                lines.append("")
+
+            if res.host_findings:
+                lines.append("--- INTERNAL / NON-PUBLIC HOSTS ---")
+                for hf in res.host_findings:
+                    addrs = f" [{', '.join(hf.addresses)}]" if hf.addresses else ""
+                    lines.append(
+                        f"  {hf.directive}: {hf.source_raw} -> {hf.host} ({hf.status}: "
+                        f"{HOST_STATUS_HELP[HostStatus(hf.status)]}){addrs}"
+                    )
                 lines.append("")
 
             lines.append("")
@@ -2389,6 +2642,9 @@ class JsonRenderer(BaseRenderer):
                         "is_bypass": i.is_bypass,
                         "is_orphan": i.is_orphan,
                         "orphan_status": i.orphan_status,
+                        "is_internal": i.is_internal,
+                        "host_status": i.host_status,
+                        "resolved_addresses": i.resolved_addresses,
                         "is_missing_https": i.is_missing_https,
                     }
                     for i in p.items
@@ -2413,6 +2669,15 @@ class JsonRenderer(BaseRenderer):
                 "status": of.status,
             }
 
+        def host_to_dict(hf: HostFinding) -> Dict:
+            return {
+                "directive": hf.directive,
+                "source_raw": hf.source_raw,
+                "host": hf.host,
+                "status": hf.status,
+                "addresses": hf.addresses,
+            }
+
         payload = [
             {
                 "requested_url": r.requested_url,
@@ -2424,6 +2689,7 @@ class JsonRenderer(BaseRenderer):
                 "warnings": {k: v for k, v in r.warnings.items()},
                 "bypass_findings": [bypass_to_dict(bf) for bf in r.bypass_findings],
                 "orphan_findings": [orphan_to_dict(of) for of in r.orphan_findings],
+                "host_findings": [host_to_dict(hf) for hf in r.host_findings],
                 "policies": [policy_to_dict(p) for p in r.policies],
             }
             for r in results
@@ -2469,6 +2735,7 @@ class LatexRenderer(BaseRenderer):
         report so no stray comment is emitted."""
         bypass_rows: List[str] = []
         orphan_rows: List[str] = []
+        host_rows: List[str] = []
         multi = len(results) > 1
 
         for res in results:
@@ -2478,8 +2745,11 @@ class LatexRenderer(BaseRenderer):
                 bypass_rows.append(f"%   {prefix}{bf.directive} {bf.source_raw} -> {bf.bypass_domain} (risks: {risks})")
             for of in res.orphan_findings:
                 orphan_rows.append(f"%   {prefix}{of.directive} {of.source_raw} -> {of.fld} ({of.status})")
+            for hf in res.host_findings:
+                addrs = f" [{', '.join(hf.addresses)}]" if hf.addresses else ""
+                host_rows.append(f"%   {prefix}{hf.directive} {hf.source_raw} -> {hf.host} ({hf.status}){addrs}")
 
-        if not bypass_rows and not orphan_rows:
+        if not bypass_rows and not orphan_rows and not host_rows:
             return ""
 
         sep = "% " + "-" * 73
@@ -2493,6 +2763,9 @@ class LatexRenderer(BaseRenderer):
         lines.append("%")
         lines.append("% Orphaned / dangling domains (unregistered, attacker-claimable; often typos):")
         lines.extend(orphan_rows or ["%   (none found)"])
+        lines.append("%")
+        lines.append("% Internal / non-public hosts (do not resolve publicly; leak internal naming):")
+        lines.extend(host_rows or ["%   (none found)"])
         lines.append(sep)
         return "\n".join(lines)
 
@@ -2508,6 +2781,9 @@ class LatexRenderer(BaseRenderer):
 
         bypasses = sorted({bf.bypass_domain for r in results for bf in r.bypass_findings})
         orphans = sorted({of.fld for r in results for of in r.orphan_findings})
+        internal_hosts = sorted(
+            {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
+        )
         deprecated = sorted({d for r in results for d in r.deprecated_used})
 
         de_bypass = Template(
@@ -2544,6 +2820,27 @@ class LatexRenderer(BaseRenderer):
             r"allow the protection provided by the CSP to be undermined. It is recommended to remove entries that "
             r"are no longer needed and to correct obvious typos."
         )
+        de_internal = Template(
+            r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, die über öffentliche DNS-Server nicht "
+            r"aufgelöst werden konnten bzw. auf interne, nicht öffentlich erreichbare Adressen verweisen "
+            r"($INTERNAL). Dabei handelt es sich typischerweise um Systeme aus dem internen Netz, die in eine "
+            r"öffentlich ausgelieferte Richtlinie übernommen wurden. Da die CSP an jeden Besucher der Anwendung "
+            r"ausgeliefert wird, gibt sie auf diese Weise interne Hostnamen, Namenskonventionen und Teile der "
+            r"internen Netzstruktur preis. Diese Informationen erleichtern einem Angreifer die Vorbereitung "
+            r"weiterer Angriffe. Zudem greifen die betroffenen Einträge für externe Nutzer ohnehin nicht. Es wird "
+            r"empfohlen, interne Hosts aus der öffentlich ausgelieferten CSP zu entfernen und interne sowie externe "
+            r"Richtlinien getrennt zu pflegen."
+        )
+        en_internal = Template(
+            r"The CSP allowlists hosts that could not be resolved via public DNS servers, or that point to internal "
+            r"addresses which are not publicly routable ($INTERNAL). These are typically systems from the internal "
+            r"network that were carried over into a policy served publicly. Because the CSP is delivered to every "
+            r"visitor of the application, it discloses internal host names, naming conventions and parts of the "
+            r"internal network structure. This information makes it easier for an attacker to prepare further "
+            r"attacks. In addition, the affected entries have no effect for external users in the first place. It "
+            r"is recommended to remove internal hosts from the publicly served CSP and to maintain internal and "
+            r"external policies separately."
+        )
         de_deprecated = Template(
             r"Die CSP verwendet veraltete bzw. nicht mehr standardisierte Direktiven ($DEPRECATED). Diese werden von "
             r"modernen Browsern teilweise ignoriert oder wurden durch neuere Direktiven ersetzt, sodass die "
@@ -2572,6 +2869,8 @@ class LatexRenderer(BaseRenderer):
             sections.append(one_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
         if orphans:
             sections.append(one_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
+        if internal_hosts:
+            sections.append(one_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts))))
         if deprecated:
             sections.append(
                 one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))
@@ -2888,17 +3187,23 @@ def read_csp_with_rich(*, sentinel: str = "EOF") -> Optional[str]:
     help="Resolve allowlisted domains via DNS/WHOIS and flag orphaned (unregistered, attacker-claimable) ones.",
 )
 @click.option(
+    "--check-hosts",
+    is_flag=True,
+    default=False,
+    help="Resolve every host in the CSP via DNS and flag internal / non-publicly-resolving ones.",
+)
+@click.option(
     "--dns-resolvers",
     default="8.8.8.8,1.1.1.1",
     show_default=True,
-    help="Comma-separated DNS resolvers used for --check-orphans.",
+    help="Comma-separated DNS resolvers used for --check-orphans/--check-hosts, tried in order.",
 )
 @click.option(
     "--dns-timeout",
     default=3.0,
     show_default=True,
     type=float,
-    help="Per-domain DNS resolve timeout in seconds for --check-orphans.",
+    help="Per-lookup DNS resolve timeout in seconds for --check-orphans/--check-hosts.",
 )
 def main(
     url,
@@ -2916,6 +3221,7 @@ def main(
     retries,
     timeout,
     check_orphans,
+    check_hosts,
     dns_resolvers,
     dns_timeout,
 ):
@@ -2948,6 +3254,12 @@ def main(
         if check_orphans:
             asyncio.run(
                 annotate_orphans([result], dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
+            )
+        if check_hosts:
+            asyncio.run(
+                annotate_internal_hosts(
+                    [result], dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout
+                )
             )
         TextRenderer(console=Console()).print_to_console([result])
         return
@@ -2986,6 +3298,11 @@ def main(
     if check_orphans:
         asyncio.run(
             annotate_orphans(results, dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
+        )
+
+    if check_hosts:
+        asyncio.run(
+            annotate_internal_hosts(results, dns_resolvers=resolver_list, concurrency=threads, dns_timeout=dns_timeout)
         )
 
     if output:

@@ -53,8 +53,8 @@ Usage: csp-check [OPTIONS]
 Options:
   -u, --url TEXT                  Single URL/domain to check.
   -f, --file TEXT                 Path to a file with one URL per line.
-  --csp                           Open an interactive input to paste a CSP
-                                  and parse it.
+  --csp                           Open an interactive input to paste a CSP and
+                                  parse it.
   -c, --cookies TEXT              Semicolon-separated cookies: 'a=b; c=d'
   -H, --headers TEXT              Semicolon-separated headers: 'X-Token: abc;
                                   Accept: text/html'
@@ -71,15 +71,19 @@ Options:
                                   multiple URLs.  [default: 20]
   --retries INTEGER               Number of retry attempts for transient
                                   network errors.  [default: 2]
-  --timeout FLOAT                 Per-request timeout in seconds.
-                                  [default: 15.0]
-  --check-orphans                 Resolve allowlisted domains via DNS/WHOIS and
-                                  flag orphaned (unregistered, attacker-
+  --timeout FLOAT                 Per-request timeout in seconds.  [default:
+                                  15.0]
+  --check-orphans                 Resolve allowlisted domains via DNS/WHOIS
+                                  and flag orphaned (unregistered, attacker-
                                   claimable) ones.
+  --check-hosts                   Resolve every host in the CSP via DNS and
+                                  flag internal / non-publicly-resolving ones.
   --dns-resolvers TEXT            Comma-separated DNS resolvers used for
-                                  --check-orphans.  [default: 8.8.8.8,1.1.1.1]
-  --dns-timeout FLOAT             Per-domain DNS resolve timeout in seconds for
-                                  --check-orphans.  [default: 3.0]
+                                  --check-orphans/--check-hosts, tried in
+                                  order.  [default: 8.8.8.8,1.1.1.1]
+  --dns-timeout FLOAT             Per-lookup DNS resolve timeout in seconds
+                                  for --check-orphans/--check-hosts.
+                                  [default: 3.0]
   -h, --help                      Show this message and exit.
 ```
 
@@ -102,6 +106,49 @@ for LaTeX output — summarized together with the known bypass domains in a
 
 > **Note:** `--check-orphans` makes outbound DNS/WHOIS requests and is therefore
 > opt-in. It does nothing in `--csp` mode unless the flag is given.
+
+---
+
+## Internal / non-public hosts
+
+`--check-orphans` works on the *registrable* domain of each source. That misses two
+things: hosts with no public suffix at all (`intranet.viola.local` — `tldextract`
+cannot derive a registrable domain, so the entry is skipped), and internal hosts
+sitting under a perfectly healthy public domain (`delci1vr.dc-ratingen.de`, where the
+apex is registered but the host has no public A/AAAA record).
+
+Pass `--check-hosts` to resolve every host in the policy and flag the ones that do not
+resolve publicly. Each host is resolved once and de-duplicated across URLs. Resolvers
+from `--dns-resolvers` are tried in order; the next one is only used when the previous
+fails in a transient way (timeout, SERVFAIL). An `NXDOMAIN` or an empty answer is
+authoritative and ends the lookup.
+
+Statuses:
+
+| Status | Meaning |
+|---|---|
+| `public` | Resolves to routable addresses. Not reported. |
+| `private-ip` | The source is, or resolves to, a non-routable address (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA). |
+| `nonpublic-tld` | No public suffix (`.local`, `.internal`, `.corp`, `.lan`, single-label names, `home.arpa`). Decided offline, no DNS query. |
+| `no-public-record` | The domain exists but the host has no public `A`/`AAAA` record — typically a split-horizon internal host. |
+| `unresolved` | No resolver answered. Inconclusive, reported but not counted as internal. |
+
+Why it matters: a public CSP is delivered to every visitor, so internal entries disclose
+internal host names, naming conventions and parts of the network structure, and they
+usually indicate a policy that was carried over from an internal environment. The
+entries have no effect for external users either way.
+
+Findings appear in the text output (`[INTERNAL: <status>]` plus an
+"Internal / Non-Public Hosts" block), in the JSON output (`host_findings` and per-item
+`is_internal` / `host_status` / `resolved_addresses`), and in the LaTeX output as a
+prose paragraph plus rows in the `%`-prefixed comment block.
+
+Wildcard sources are classified by suffix only. `*.gstatic.com` has no resolvable name
+of its own and an empty answer on the apex would be a false positive, but
+`*.viola.local` is still flagged.
+
+> **Note:** `--check-hosts` makes outbound DNS requests and is therefore opt-in. It can
+> be combined with `--check-orphans`.
 
 ---
 

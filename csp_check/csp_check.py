@@ -1463,6 +1463,21 @@ BYPASS_DOMAINS: Dict[str, Dict] = {
 }
 
 
+def _index_bypass_domains() -> Dict[str, List[str]]:
+    """Map every parent suffix of a bypass domain to the domains under it, so a
+    wildcard source resolves with one lookup instead of a walk over the whole
+    table."""
+    index: Dict[str, List[str]] = {}
+    for domain in BYPASS_DOMAINS:
+        labels = domain.split(".")
+        for cut in range(1, len(labels)):
+            index.setdefault(".".join(labels[cut:]), []).append(domain)
+    return index
+
+
+BYPASS_DOMAINS_BY_SUFFIX: Dict[str, List[str]] = _index_bypass_domains()
+
+
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
 
 console = Console()
@@ -1681,19 +1696,22 @@ def is_wildcard_token(token: str) -> bool:
     return wildcard_kind(token) is not None
 
 
-def source_permits_host(csp_source: str, host: str) -> bool:
-    """Return True if the CSP source token would permit loading from `host`."""
-    if not host or not csp_source:
-        return False
-
+def source_host(csp_source: str) -> str:
+    """The bare host a source token names, without scheme, port or path."""
     src = csp_source.strip().lower()
     for scheme in ("https://", "http://", "wss://", "ws://", "//"):
         if src.startswith(scheme):
             src = src[len(scheme) :]
             break
+    return src.split(":")[0].split("/")[0]
 
-    # Strip port and path
-    src = src.split(":")[0].split("/")[0]
+
+def source_permits_host(csp_source: str, host: str) -> bool:
+    """Return True if the CSP source token would permit loading from `host`."""
+    if not host or not csp_source:
+        return False
+
+    src = source_host(csp_source)
     host_lc = host.lower().strip()
 
     # Exact match
@@ -2010,6 +2028,14 @@ def mark_ineffective_sources(policies: List[Policy]) -> None:
             item.is_ineffective = any(g is not None and not _permits(g, item) for g in governing)
 
 
+def matching_bypass_domains(csp_source: str) -> List[str]:
+    """The known bypass domains a source token permits."""
+    src = source_host(csp_source)
+    if src.startswith("*."):
+        return BYPASS_DOMAINS_BY_SUFFIX.get(src[2:], [])
+    return [src] if src in BYPASS_DOMAINS else []
+
+
 def _scan_bypasses(policies: List[Policy]) -> List[BypassFinding]:
     """Mark every source that names a domain known to defeat a CSP."""
     findings: List[BypassFinding] = []
@@ -2018,9 +2044,8 @@ def _scan_bypasses(policies: List[Policy]) -> List[BypassFinding]:
         for item in policy.items:
             if item.is_ineffective:
                 continue
-            for bypass_domain, meta in BYPASS_DOMAINS.items():
-                if not source_permits_host(item.normalized, bypass_domain):
-                    continue
+            for bypass_domain in matching_bypass_domains(item.normalized):
+                meta = BYPASS_DOMAINS[bypass_domain]
                 item.is_bypass = True
                 item.color = "bright_red"
                 key = (policy.name, item.raw, bypass_domain)

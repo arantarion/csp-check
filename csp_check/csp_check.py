@@ -1838,6 +1838,14 @@ def one_sentence_per_line(text: str) -> str:
     return re.sub(r"(?<=[.!?]) +(?=[A-ZÄÖÜ])", "\n", text)
 
 
+def sylisttt(items: Sequence[str]) -> str:
+    r"""Render the affected entries as a ``\sylisttt`` itemisation. The macro
+    sets each comma-separated item in ``\texttt``, so the items go in
+    unwrapped. Long lists read badly inside a parenthesis, which is what this
+    replaces."""
+    return rf"\sylisttt{{{','.join(latex_escape(i) for i in items)}}}"
+
+
 def latex_escape(text: str) -> str:
     """Escape the characters that would break a LaTeX run. URLs from the command
     line and host names from a CSP routinely contain ``&``, ``%``, ``#`` and
@@ -3228,6 +3236,310 @@ class JsonRenderer(BaseRenderer):
         return json.dumps(payload, indent=2, sort_keys=False)
 
 
+@dataclass(frozen=True)
+class ProseBlock:
+    """One report paragraph, in both languages and in both numbers.
+
+    The placeholder ``$LIST`` marks where the affected entries are itemised.
+    Singular and plural are written out rather than derived, because agreement
+    in German runs through the whole paragraph, not just the noun."""
+
+    de_one: str
+    de_many: str
+    en_one: str
+    en_many: str
+
+    def render(self, items: Sequence[str], lang: str) -> str:
+        if lang == "de":
+            text = self.de_one if len(items) == 1 else self.de_many
+        else:
+            text = self.en_one if len(items) == 1 else self.en_many
+        return one_sentence_per_line(text.replace("$LIST", sylisttt(items)))
+
+
+PROSE_CATCHALL = ProseBlock(
+    de_one=(
+        r"Für Skriptquellen erlaubt die CSP einen Platzhalter, der jede beliebige Herkunft einschließt:"
+        "\n$LIST\n"
+        r"Damit sind auch sämtliche Domains erlaubt, über die sich die Schutzwirkung einer Content Security "
+        r"Policy nachweislich umgehen lässt, etwa über JSONP-Schnittstellen oder sogenannte "
+        r"\enquote{Script Gadgets}. Eine Einzelaufstellung dieser Domains erübrigt sich, da die Richtlinie an "
+        r"dieser Stelle keine Einschränkung vornimmt. Es wird empfohlen, die Skriptquellen auf die tatsächlich "
+        r"benötigten Hosts zu beschränken."
+    ),
+    de_many=(
+        r"Für Skriptquellen erlaubt die CSP Platzhalter, die jede beliebige Herkunft einschließen:"
+        "\n$LIST\n"
+        r"Damit sind auch sämtliche Domains erlaubt, über die sich die Schutzwirkung einer Content Security "
+        r"Policy nachweislich umgehen lässt, etwa über JSONP-Schnittstellen oder sogenannte "
+        r"\enquote{Script Gadgets}. Eine Einzelaufstellung dieser Domains erübrigt sich, da die Richtlinie an "
+        r"dieser Stelle keine Einschränkung vornimmt. Es wird empfohlen, die Skriptquellen auf die tatsächlich "
+        r"benötigten Hosts zu beschränken."
+    ),
+    en_one=(
+        r"The CSP allows a script source that covers any origin:"
+        "\n$LIST\n"
+        r"Every domain known to defeat a Content Security Policy, whether through a JSONP interface or a "
+        r"so-called \enquote{script gadget}, is therefore permitted as well. Listing those domains individually "
+        r"serves no purpose, because the policy imposes no restriction at this point. It is recommended to "
+        r"narrow the script sources to the hosts that are actually needed."
+    ),
+    en_many=(
+        r"The CSP allows script sources that cover any origin:"
+        "\n$LIST\n"
+        r"Every domain known to defeat a Content Security Policy, whether through a JSONP interface or a "
+        r"so-called \enquote{script gadget}, is therefore permitted as well. Listing those domains individually "
+        r"serves no purpose, because the policy imposes no restriction at this point. It is recommended to "
+        r"narrow the script sources to the hosts that are actually needed."
+    ),
+)
+
+PROSE_BYPASS = ProseBlock(
+    de_one=(
+        r"Eine der in der CSP erlaubten Quellen ist dafür bekannt, dass sich über sie die Schutzwirkung der "
+        r"Content Security Policy umgehen lässt:"
+        "\n$LIST\n"
+        r"Auf dieser Domain werden Endpunkte wie JSONP-Schnittstellen oder sogenannte \enquote{Script Gadgets} "
+        r"bereitgestellt, mit denen sich trotz aktiver CSP beliebiger JavaScript-Code zur Ausführung bringen "
+        r"lässt. Da die Domain als Skriptquelle zugelassen ist, kann ein Angreifer die CSP im Rahmen eines "
+        r"Cross-Site-Scripting-Angriffs umgehen und Schadcode ausführen. Es wird empfohlen, die betroffene "
+        r"Quelle zu entfernen oder, sofern sie zwingend benötigt wird, so restriktiv wie möglich einzuschränken."
+    ),
+    de_many=(
+        r"Einige der in der CSP erlaubten Quellen sind dafür bekannt, dass sich über sie die Schutzwirkung der "
+        r"Content Security Policy umgehen lässt:"
+        "\n$LIST\n"
+        r"Auf diesen Domains werden Endpunkte wie JSONP-Schnittstellen oder sogenannte \enquote{Script Gadgets} "
+        r"bereitgestellt, mit denen sich trotz aktiver CSP beliebiger JavaScript-Code zur Ausführung bringen "
+        r"lässt. Ist eine solche Domain als Skriptquelle zugelassen, kann ein Angreifer die CSP im Rahmen eines "
+        r"Cross-Site-Scripting-Angriffs umgehen und Schadcode ausführen. Es wird empfohlen, die betroffenen "
+        r"Quellen zu entfernen oder, sofern sie zwingend benötigt werden, so restriktiv wie möglich "
+        r"einzuschränken."
+    ),
+    en_one=(
+        r"One of the sources allowed by the CSP is known to allow the protection of the Content Security Policy "
+        r"to be bypassed:"
+        "\n$LIST\n"
+        r"This domain hosts endpoints such as JSONP interfaces or so-called \enquote{script gadgets} that can be "
+        r"abused to execute arbitrary JavaScript code despite an active CSP. Because the domain is permitted as "
+        r"a script source, an attacker can circumvent the CSP in the context of a cross-site scripting attack "
+        r"and execute malicious code. It is recommended to remove the affected source or, if it is strictly "
+        r"required, to restrict it as much as possible."
+    ),
+    en_many=(
+        r"Some of the sources allowed by the CSP are known to allow the protection of the Content Security "
+        r"Policy to be bypassed:"
+        "\n$LIST\n"
+        r"These domains host endpoints such as JSONP interfaces or so-called \enquote{script gadgets} that can "
+        r"be abused to execute arbitrary JavaScript code despite an active CSP. If such a domain is permitted as "
+        r"a script source, an attacker can circumvent the CSP in the context of a cross-site scripting attack "
+        r"and execute malicious code. It is recommended to remove the affected sources or, if they are strictly "
+        r"required, to restrict them as much as possible."
+    ),
+)
+
+PROSE_ORPHAN = ProseBlock(
+    de_one=(
+        r"In der CSP ist ein Host als vertrauenswürdige Quelle hinterlegt, dessen registrierbare Domain zum "
+        r"Zeitpunkt der Untersuchung nicht registriert war:"
+        "\n$LIST\n"
+        r"Häufig handelt es sich dabei um einen Tippfehler oder um die Domain eines Dienstes, der nicht mehr "
+        r"verwendet wird. Da die Domain frei registriert werden kann, könnte ein Angreifer sie auf sich "
+        r"registrieren und anschließend Inhalte aus einer Quelle ausliefern, der die CSP bereits vertraut. Auf "
+        r"diese Weise ließe sich die Schutzwirkung der CSP aushebeln. Es wird empfohlen, den Eintrag zu "
+        r"entfernen oder den Tippfehler zu korrigieren."
+    ),
+    de_many=(
+        r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, deren registrierbare Domains zum "
+        r"Zeitpunkt der Untersuchung nicht registriert waren:"
+        "\n$LIST\n"
+        r"In vielen Fällen handelt es sich dabei um Tippfehler oder um Domains von Diensten, die nicht mehr "
+        r"verwendet werden. Da solche Domains frei registriert werden können, könnte ein Angreifer sie auf sich "
+        r"registrieren und anschließend Inhalte aus einer Quelle ausliefern, der die CSP bereits vertraut. Auf "
+        r"diese Weise ließe sich die Schutzwirkung der CSP aushebeln. Es wird empfohlen, nicht mehr benötigte "
+        r"Einträge zu entfernen sowie Tippfehler zu korrigieren."
+    ),
+    en_one=(
+        r"The CSP allowlists a host whose registrable domain was not registered at the time of the assessment:"
+        "\n$LIST\n"
+        r"This is often a typo or the domain of a service that is no longer in use. Because the domain can be "
+        r"registered freely, an attacker could register it and then serve content -- for example scripts -- from "
+        r"a source the CSP already trusts. This would allow the protection provided by the CSP to be undermined. "
+        r"It is recommended to remove the entry or to correct the typo."
+    ),
+    en_many=(
+        r"The CSP allowlists hosts whose registrable domains were not registered at the time of the assessment:"
+        "\n$LIST\n"
+        r"In many cases these are typos or domains of services that are no longer in use. Because such domains "
+        r"can be registered freely, an attacker could register one and then serve content -- for example "
+        r"scripts -- from a source the CSP already trusts. This would allow the protection provided by the CSP "
+        r"to be undermined. It is recommended to remove entries that are no longer needed and to correct obvious "
+        r"typos."
+    ),
+)
+
+PROSE_DANGLING = ProseBlock(
+    de_one=(
+        r"In der CSP ist eine Quelle hinterlegt, die auf eine registrierbare Domain verweist, welche zum "
+        r"Zeitpunkt der Untersuchung nicht über das DNS aufgelöst werden konnte:"
+        "\n$LIST\n"
+        r"Ob die Domain noch registriert ist, ließ sich nicht abschließend klären. Der betroffene Eintrag hat "
+        r"derzeit keine Wirkung und deutet auf einen Tippfehler oder auf einen nicht mehr genutzten Dienst hin. "
+        r"Sollte die Domain tatsächlich nicht mehr registriert sein, könnte ein Angreifer sie auf sich "
+        r"registrieren und Inhalte aus einer Quelle ausliefern, der die CSP bereits vertraut. Es wird empfohlen, "
+        r"den betroffenen Eintrag zu prüfen und, sofern er nicht mehr benötigt wird, zu entfernen."
+    ),
+    de_many=(
+        r"In der CSP sind Quellen hinterlegt, die auf registrierbare Domains verweisen, welche zum Zeitpunkt der "
+        r"Untersuchung nicht über das DNS aufgelöst werden konnten:"
+        "\n$LIST\n"
+        r"Ob diese Domains noch registriert sind, ließ sich nicht abschließend klären. Die betroffenen Einträge "
+        r"haben derzeit keine Wirkung und deuten auf Tippfehler oder auf nicht mehr genutzte Dienste hin. Sollte "
+        r"eine der Domains tatsächlich nicht mehr registriert sein, könnte ein Angreifer sie auf sich "
+        r"registrieren und Inhalte aus einer Quelle ausliefern, der die CSP bereits vertraut. Es wird empfohlen, "
+        r"die betroffenen Einträge zu prüfen und nicht mehr benötigte zu entfernen."
+    ),
+    en_one=(
+        r"The CSP contains a source pointing to a registrable domain that could not be resolved via DNS at the "
+        r"time of the assessment:"
+        "\n$LIST\n"
+        r"Whether it is still registered could not be established. The affected entry has no effect at present "
+        r"and points to a typo or to a service that is no longer in use. Should the domain turn out to be "
+        r"unregistered, an attacker could register it and serve content from a source the CSP already trusts. It "
+        r"is recommended to review the affected entry and to remove it if it is no longer needed."
+    ),
+    en_many=(
+        r"The CSP contains sources pointing to registrable domains that could not be resolved via DNS at the "
+        r"time of the assessment:"
+        "\n$LIST\n"
+        r"Whether they are still registered could not be established. The affected entries have no effect at "
+        r"present and point to typos or to services that are no longer in use. Should one of the domains turn "
+        r"out to be unregistered, an attacker could register it and serve content from a source the CSP already "
+        r"trusts. It is recommended to review the affected entries and to remove the ones that are no longer "
+        r"needed."
+    ),
+)
+
+PROSE_INTERNAL = ProseBlock(
+    de_one=(
+        r"In der CSP ist ein Host als vertrauenswürdige Quelle hinterlegt, der über öffentliche DNS-Server nicht "
+        r"aufgelöst werden konnte bzw. auf eine interne, nicht öffentlich erreichbare Adresse verweist:"
+        "\n$LIST\n"
+        r"Dabei handelt es sich typischerweise um ein System aus dem internen Netz, das in eine öffentlich "
+        r"ausgelieferte Richtlinie übernommen wurde. Da die CSP an jeden Besucher der Anwendung ausgeliefert "
+        r"wird, gibt sie auf diese Weise einen internen Hostnamen und damit einen Teil der internen "
+        r"Namenskonvention preis. Diese Information erleichtert einem Angreifer die Vorbereitung weiterer "
+        r"Angriffe. Zudem greift der betroffene Eintrag für externe Nutzer ohnehin nicht. Es wird empfohlen, "
+        r"interne Hosts aus der öffentlich ausgelieferten CSP zu entfernen und interne sowie externe Richtlinien "
+        r"getrennt zu pflegen."
+    ),
+    de_many=(
+        r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, die über öffentliche DNS-Server nicht "
+        r"aufgelöst werden konnten bzw. auf interne, nicht öffentlich erreichbare Adressen verweisen:"
+        "\n$LIST\n"
+        r"Dabei handelt es sich typischerweise um Systeme aus dem internen Netz, die in eine öffentlich "
+        r"ausgelieferte Richtlinie übernommen wurden. Da die CSP an jeden Besucher der Anwendung ausgeliefert "
+        r"wird, gibt sie auf diese Weise interne Hostnamen, Namenskonventionen und Teile der internen "
+        r"Netzstruktur preis. Diese Informationen erleichtern einem Angreifer die Vorbereitung weiterer "
+        r"Angriffe. Zudem greifen die betroffenen Einträge für externe Nutzer ohnehin nicht. Es wird empfohlen, "
+        r"interne Hosts aus der öffentlich ausgelieferten CSP zu entfernen und interne sowie externe Richtlinien "
+        r"getrennt zu pflegen."
+    ),
+    en_one=(
+        r"The CSP allowlists a host that could not be resolved via public DNS servers, or that points to an "
+        r"internal address which is not publicly routable:"
+        "\n$LIST\n"
+        r"This is typically a system from the internal network that was carried over into a policy served "
+        r"publicly. Because the CSP is delivered to every visitor of the application, it discloses an internal "
+        r"host name and with it part of the internal naming convention. This information makes it easier for an "
+        r"attacker to prepare further attacks. In addition, the affected entry has no effect for external users "
+        r"in the first place. It is recommended to remove internal hosts from the publicly served CSP and to "
+        r"maintain internal and external policies separately."
+    ),
+    en_many=(
+        r"The CSP allowlists hosts that could not be resolved via public DNS servers, or that point to internal "
+        r"addresses which are not publicly routable:"
+        "\n$LIST\n"
+        r"These are typically systems from the internal network that were carried over into a policy served "
+        r"publicly. Because the CSP is delivered to every visitor of the application, it discloses internal host "
+        r"names, naming conventions and parts of the internal network structure. This information makes it "
+        r"easier for an attacker to prepare further attacks. In addition, the affected entries have no effect "
+        r"for external users in the first place. It is recommended to remove internal hosts from the publicly "
+        r"served CSP and to maintain internal and external policies separately."
+    ),
+)
+
+PROSE_UNKNOWN = ProseBlock(
+    de_one=(
+        r"In der CSP wird eine Direktive verwendet, die im Standard nicht definiert ist:"
+        "\n$LIST\n"
+        r"Browser ignorieren unbekannte Direktiven vollständig. Handelt es sich um einen Schreibfehler, greift "
+        r"die beabsichtigte Einschränkung für den betroffenen Ressourcentyp nicht, ohne dass dies im laufenden "
+        r"Betrieb auffällt. Es wird empfohlen, die Schreibweise der betroffenen Direktive zu prüfen und zu "
+        r"korrigieren."
+    ),
+    de_many=(
+        r"In der CSP werden Direktiven verwendet, die im Standard nicht definiert sind:"
+        "\n$LIST\n"
+        r"Browser ignorieren unbekannte Direktiven vollständig. Handelt es sich um Schreibfehler, greifen die "
+        r"beabsichtigten Einschränkungen für die betroffenen Ressourcentypen nicht, ohne dass dies im laufenden "
+        r"Betrieb auffällt. Es wird empfohlen, die Schreibweise der betroffenen Direktiven zu prüfen und zu "
+        r"korrigieren."
+    ),
+    en_one=(
+        r"The CSP uses a directive that the standard does not define:"
+        "\n$LIST\n"
+        r"Browsers ignore unknown directives entirely. If the name is a typo, the intended restriction for the "
+        r"affected resource type does not apply at all, and nothing in normal operation reveals this. It is "
+        r"recommended to check the spelling of the affected directive and to correct it."
+    ),
+    en_many=(
+        r"The CSP uses directives that the standard does not define:"
+        "\n$LIST\n"
+        r"Browsers ignore unknown directives entirely. If the names are typos, the intended restrictions for the "
+        r"affected resource types do not apply at all, and nothing in normal operation reveals this. It is "
+        r"recommended to check the spelling of the affected directives and to correct it."
+    ),
+)
+
+PROSE_DEPRECATED = ProseBlock(
+    de_one=(
+        r"Die CSP verwendet eine veraltete bzw. nicht mehr standardisierte Direktive:"
+        "\n$LIST\n"
+        r"Diese wird von modernen Browsern teilweise ignoriert oder wurde durch eine neuere Direktive ersetzt, "
+        r"sodass die beabsichtigte Einschränkung möglicherweise nicht oder nicht wie erwartet greift. Es wird "
+        r"empfohlen, die veraltete Direktive durch ihre aktuelle Entsprechung zu ersetzen -- etwa "
+        r"\texttt{report-to} anstelle von \texttt{report-uri} oder \texttt{frame-src} und \texttt{worker-src} "
+        r"anstelle von \texttt{child-src}."
+    ),
+    de_many=(
+        r"Die CSP verwendet veraltete bzw. nicht mehr standardisierte Direktiven:"
+        "\n$LIST\n"
+        r"Diese werden von modernen Browsern teilweise ignoriert oder wurden durch neuere Direktiven ersetzt, "
+        r"sodass die beabsichtigte Einschränkung möglicherweise nicht oder nicht wie erwartet greift. Es wird "
+        r"empfohlen, die veralteten Direktiven durch ihre aktuellen Entsprechungen zu ersetzen -- etwa "
+        r"\texttt{report-to} anstelle von \texttt{report-uri} oder \texttt{frame-src} und \texttt{worker-src} "
+        r"anstelle von \texttt{child-src}."
+    ),
+    en_one=(
+        r"The CSP uses a deprecated or non-standardised directive:"
+        "\n$LIST\n"
+        r"It is partly ignored by modern browsers or has been superseded by a newer directive, so the intended "
+        r"restriction may not take effect or may not behave as expected. It is recommended to replace the "
+        r"deprecated directive with its current equivalent -- for example \texttt{report-to} instead of "
+        r"\texttt{report-uri}, or \texttt{frame-src} and \texttt{worker-src} instead of \texttt{child-src}."
+    ),
+    en_many=(
+        r"The CSP uses deprecated or non-standardised directives:"
+        "\n$LIST\n"
+        r"These are partly ignored by modern browsers or have been superseded by newer directives, so the "
+        r"intended restriction may not take effect or may not behave as expected. It is recommended to replace "
+        r"the deprecated directives with their current equivalents -- for example \texttt{report-to} instead of "
+        r"\texttt{report-uri}, or \texttt{frame-src} and \texttt{worker-src} instead of \texttt{child-src}."
+    ),
+)
+
+
 # Canonical column/attribute order of the `probleme=` baustein options.
 PROBLEM_ORDER = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
 
@@ -3424,168 +3736,26 @@ class LatexRenderer(BaseRenderer):
         )
 
     def _extra_sections(self, results: List[URLResult]) -> str:
-        """Prose paragraphs (DE/EN) explaining the problem classes that have no
-        dedicated `probleme=` group in the template — known bypasses, orphaned
-        domains and deprecated directives — emitted only when relevant. The
-        concrete affected entries are injected into the text."""
-        de = self.lang == "de"
+        """The prose paragraphs for the problem classes that have no dedicated
+        `probleme=` group in the template, each emitted only when it applies and
+        naming the entries it is about."""
+        described = [r for r in results if has_effective_csp(r)]
+        orphan_findings = [of for r in results for of in r.orphan_findings]
 
-        def tt(items: List[str]) -> str:
-            return ", ".join(rf"\texttt{{{latex_escape(i)}}}" for i in items)
+        groups = [
+            (PROSE_CATCHALL, {c for r in described for c in r.warnings.get("bypass_via_catchall", [])}),
+            (PROSE_BYPASS, {bf.bypass_domain for r in described for bf in r.bypass_findings}),
+            (PROSE_ORPHAN, {of.fld for of in orphan_findings if is_claimable(of.status)}),
+            (PROSE_DANGLING, {of.fld for of in orphan_findings if not is_claimable(of.status)}),
+            (
+                PROSE_INTERNAL,
+                {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES},
+            ),
+            (PROSE_UNKNOWN, {d for r in results for d in r.unknown_used}),
+            (PROSE_DEPRECATED, {d for r in results for d in r.deprecated_used}),
+        ]
 
-        bypasses = sorted({bf.bypass_domain for r in results if has_effective_csp(r) for bf in r.bypass_findings})
-        catchall = sorted(
-            {c for r in results if has_effective_csp(r) for c in r.warnings.get("bypass_via_catchall", [])}
-        )
-        orphans = sorted({of.fld for r in results for of in r.orphan_findings if is_claimable(of.status)})
-        dangling = sorted({of.fld for r in results for of in r.orphan_findings if not is_claimable(of.status)})
-        internal_hosts = sorted(
-            {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
-        )
-        deprecated = sorted({d for r in results for d in r.deprecated_used})
-        unknown = sorted({d for r in results for d in r.unknown_used})
-
-        de_bypass = Template(
-            r"Einige der in der CSP erlaubten Quellen ($BYPASS) sind dafür bekannt, dass sich über sie die "
-            r"Schutzwirkung der Content Security Policy umgehen lässt. Auf diesen Domains werden Endpunkte wie "
-            r"JSONP-Schnittstellen oder sogenannte \enquote{Script Gadgets} bereitgestellt, mit denen sich trotz "
-            r"aktiver CSP beliebiger JavaScript-Code zur Ausführung bringen lässt. Ist eine solche Domain als "
-            r"Skriptquelle zugelassen, kann ein Angreifer die CSP im Rahmen eines Cross-Site-Scripting-Angriffs "
-            r"umgehen und Schadcode ausführen. Es wird empfohlen, die betroffenen Quellen zu entfernen oder, sofern "
-            r"sie zwingend benötigt werden, so restriktiv wie möglich einzuschränken."
-        )
-        en_bypass = Template(
-            r"Some of the sources allowed by the CSP ($BYPASS) are known to allow the protection of the Content "
-            r"Security Policy to be bypassed. These domains host endpoints such as JSONP interfaces or so-called "
-            r"\enquote{script gadgets} that can be abused to execute arbitrary JavaScript code despite an active "
-            r"CSP. If such a domain is permitted as a script source, an attacker can circumvent the CSP in the "
-            r"context of a cross-site scripting attack and execute malicious code. It is recommended to remove the "
-            r"affected sources or, if they are strictly required, to restrict them as much as possible."
-        )
-        de_catchall = Template(
-            r"Für Skriptquellen erlaubt die CSP Platzhalter, die jede beliebige Herkunft einschließen "
-            r"($CATCHALL). Damit sind auch sämtliche Domains erlaubt, über die sich die Schutzwirkung einer "
-            r"Content Security Policy nachweislich umgehen lässt, etwa über JSONP-Schnittstellen oder "
-            r"sogenannte \enquote{Script Gadgets}. Eine Einzelaufstellung dieser Domains erübrigt sich, da die "
-            r"Richtlinie an dieser Stelle keine Einschränkung vornimmt. Es wird empfohlen, die Skriptquellen "
-            r"auf die tatsächlich benötigten Hosts zu beschränken."
-        )
-        en_catchall = Template(
-            r"The CSP allows script sources that cover any origin ($CATCHALL). Every domain known to defeat a "
-            r"Content Security Policy, whether through a JSONP interface or a so-called \enquote{script "
-            r"gadget}, is therefore permitted as well. Listing those domains individually serves no purpose, "
-            r"because the policy imposes no restriction at this point. It is recommended to narrow the script "
-            r"sources to the hosts that are actually needed."
-        )
-        de_orphan = Template(
-            r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, deren registrierbare Domains ($ORPHAN) "
-            r"zum Zeitpunkt der Untersuchung nicht registriert waren. In vielen Fällen handelt es sich dabei um "
-            r"Tippfehler oder um Domains von Diensten, die nicht mehr verwendet werden. Da solche Domains frei "
-            r"registriert werden können, könnte ein Angreifer sie auf sich registrieren und anschließend Inhalte "
-            r"aus einer Quelle ausliefern, der die CSP bereits vertraut. Auf diese Weise ließe sich die "
-            r"Schutzwirkung der CSP aushebeln. Es wird empfohlen, nicht mehr benötigte Einträge zu entfernen sowie "
-            r"Tippfehler zu korrigieren."
-        )
-        en_orphan = Template(
-            r"The CSP allowlists hosts whose registrable domains ($ORPHAN) were not registered at the time of the "
-            r"assessment. In many cases these are typos or domains of services that are no longer in use. Because "
-            r"such domains can be registered freely, an attacker could register one and then serve content -- for "
-            r"example scripts -- from a source the CSP already trusts. This would allow the protection provided by "
-            r"the CSP to be undermined. It is recommended to remove entries that are no longer needed and to "
-            r"correct obvious typos."
-        )
-        de_dangling = Template(
-            r"In der CSP sind Quellen hinterlegt, die auf registrierbare Domains ($DANGLING) verweisen, welche "
-            r"zum Zeitpunkt der Untersuchung nicht über das DNS aufgelöst werden konnten. Ob diese Domains noch "
-            r"registriert sind, ließ sich nicht abschließend klären. Die betroffenen Einträge haben derzeit keine "
-            r"Wirkung und deuten auf Tippfehler oder auf nicht mehr genutzte Dienste hin. Sollte eine der Domains "
-            r"tatsächlich nicht mehr registriert sein, könnte ein Angreifer sie auf sich registrieren und Inhalte "
-            r"aus einer Quelle ausliefern, der die CSP bereits vertraut. Es wird empfohlen, die betroffenen "
-            r"Einträge zu prüfen und nicht mehr benötigte zu entfernen."
-        )
-        en_dangling = Template(
-            r"The CSP contains sources pointing to registrable domains ($DANGLING) that could not be resolved "
-            r"via DNS at the time of the assessment. Whether they are still registered could not be established. The "
-            r"affected entries have no effect at present and point to typos or to services that are no longer in "
-            r"use. Should one of the domains turn out to be unregistered, an attacker could register it and serve "
-            r"content from a source the CSP already trusts. It is recommended to review the affected entries and "
-            r"to remove the ones that are no longer needed."
-        )
-        de_internal = Template(
-            r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, die über öffentliche DNS-Server nicht "
-            r"aufgelöst werden konnten bzw. auf interne, nicht öffentlich erreichbare Adressen verweisen "
-            r"($INTERNAL). Dabei handelt es sich typischerweise um Systeme aus dem internen Netz, die in eine "
-            r"öffentlich ausgelieferte Richtlinie übernommen wurden. Da die CSP an jeden Besucher der Anwendung "
-            r"ausgeliefert wird, gibt sie auf diese Weise interne Hostnamen, Namenskonventionen und Teile der "
-            r"internen Netzstruktur preis. Diese Informationen erleichtern einem Angreifer die Vorbereitung "
-            r"weiterer Angriffe. Zudem greifen die betroffenen Einträge für externe Nutzer ohnehin nicht. Es wird "
-            r"empfohlen, interne Hosts aus der öffentlich ausgelieferten CSP zu entfernen und interne sowie externe "
-            r"Richtlinien getrennt zu pflegen."
-        )
-        en_internal = Template(
-            r"The CSP allowlists hosts that could not be resolved via public DNS servers, or that point to internal "
-            r"addresses which are not publicly routable ($INTERNAL). These are typically systems from the internal "
-            r"network that were carried over into a policy served publicly. Because the CSP is delivered to every "
-            r"visitor of the application, it discloses internal host names, naming conventions and parts of the "
-            r"internal network structure. This information makes it easier for an attacker to prepare further "
-            r"attacks. In addition, the affected entries have no effect for external users in the first place. It "
-            r"is recommended to remove internal hosts from the publicly served CSP and to maintain internal and "
-            r"external policies separately."
-        )
-        de_unknown = Template(
-            r"In der CSP werden Direktiven verwendet, die im Standard nicht definiert sind ($UNKNOWN). "
-            r"Browser ignorieren unbekannte Direktiven vollständig. Handelt es sich um einen Schreibfehler, "
-            r"greift die beabsichtigte Einschränkung für den betroffenen Ressourcentyp nicht, ohne dass dies "
-            r"im laufenden Betrieb auffällt. Es wird empfohlen, die Schreibweise der betroffenen Direktiven zu "
-            r"prüfen und zu korrigieren."
-        )
-        en_unknown = Template(
-            r"The CSP uses directives that the standard does not define ($UNKNOWN). Browsers ignore unknown "
-            r"directives entirely. If the name is a typo, the intended restriction for the affected resource "
-            r"type does not apply at all, and nothing in normal operation reveals this. It is recommended to "
-            r"check the spelling of the affected directives and to correct it."
-        )
-        de_deprecated = Template(
-            r"Die CSP verwendet veraltete bzw. nicht mehr standardisierte Direktiven ($DEPRECATED). Diese werden von "
-            r"modernen Browsern teilweise ignoriert oder wurden durch neuere Direktiven ersetzt, sodass die "
-            r"beabsichtigte Einschränkung möglicherweise nicht oder nicht wie erwartet greift. Es wird empfohlen, "
-            r"die veralteten Direktiven durch ihre aktuellen Entsprechungen zu ersetzen -- etwa \texttt{report-to} "
-            r"anstelle von \texttt{report-uri} oder \texttt{frame-src} und \texttt{worker-src} anstelle von "
-            r"\texttt{child-src}."
-        )
-        en_deprecated = Template(
-            r"The CSP uses deprecated or non-standardised directives ($DEPRECATED). These are partly ignored by "
-            r"modern browsers or have been superseded by newer directives, so the intended restriction may not take "
-            r"effect or may not behave as expected. It is recommended to replace the deprecated directives with "
-            r"their current equivalents -- for example \texttt{report-to} instead of \texttt{report-uri}, or "
-            r"\texttt{frame-src} and \texttt{worker-src} instead of \texttt{child-src}."
-        )
-
-        sections: List[str] = []
-        if catchall:
-            sections.append(
-                one_sentence_per_line((de_catchall if de else en_catchall).substitute(CATCHALL=tt(catchall)))
-            )
-        if bypasses:
-            sections.append(one_sentence_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
-        if orphans:
-            sections.append(one_sentence_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
-        if dangling:
-            sections.append(
-                one_sentence_per_line((de_dangling if de else en_dangling).substitute(DANGLING=tt(dangling)))
-            )
-        if internal_hosts:
-            sections.append(
-                one_sentence_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts)))
-            )
-        if unknown:
-            sections.append(one_sentence_per_line((de_unknown if de else en_unknown).substitute(UNKNOWN=tt(unknown))))
-        if deprecated:
-            sections.append(
-                one_sentence_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))
-            )
-
-        return "\n\n".join(sections)
+        return "\n\n".join(block.render(sorted(items), self.lang) for block, items in groups if items)
 
     def _block_no_csp(self, plural: bool = False) -> str:
         if self.lang == "de":

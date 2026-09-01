@@ -3124,6 +3124,30 @@ class JsonRenderer(BaseRenderer):
 # Canonical column/attribute order of the `probleme=` baustein options.
 PROBLEM_ORDER = ["missing-directive", "unsafe", "no-https", "all-origins", "data", "no-report"]
 
+# Column headings for the overview table. The keys of the problem entries are the
+# `probleme=` option names, which are internal and stay untranslated in the
+# baustein call itself.
+COLUMN_TITLES: Dict[str, Dict[str, str]] = {
+    "de": {
+        "missing-directive": "Fehlende Direktiven",
+        "unsafe": "Unsichere Schlüsselwörter",
+        "no-https": "HTTPS nicht erzwungen",
+        "all-origins": "Alle Quellen erlaubt",
+        "data": r"\texttt{data:}/\texttt{blob:} erlaubt",
+        "no-report": "Kein Reporting",
+        "no-csp": "Keine CSP gesetzt",
+    },
+    "en": {
+        "missing-directive": "Missing directives",
+        "unsafe": "Unsafe keywords",
+        "no-https": "HTTPS not enforced",
+        "all-origins": "All origins allowed",
+        "data": r"\texttt{data:}/\texttt{blob:} allowed",
+        "no-report": "No reporting",
+        "no-csp": "No CSP set",
+    },
+}
+
 
 class LatexRenderer(BaseRenderer):
     def __init__(self, lang: str = "en"):
@@ -3525,11 +3549,10 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 {{csp}}
 """.strip()
 
-        headers = cumulative[:]
-        headers.append("no csp set")
-        header_titles = ["URL"] + headers
-        num_problem_cols = len(headers)
-        col_spec = "l" + ("-c" * num_problem_cols)
+        titles = COLUMN_TITLES[self.lang]
+        columns = cumulative + ["no-csp"]
+        header_titles = ["URL"] + [titles[c] for c in columns]
+        col_spec = "l" + ("-c" * len(columns))
 
         lines: List[str] = []
         lines.append(

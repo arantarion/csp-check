@@ -20,8 +20,6 @@ import json
 import re
 import socket
 import sys
-import urllib.parse
-
 import click
 import tldextract
 from dataclasses import dataclass, field
@@ -1443,6 +1441,7 @@ class SourceItem:
     is_orphan: bool = False
     orphan_status: Optional[str] = None
     is_internal: bool = False
+    wildcard_kind: Optional[str] = None
     host_status: Optional[str] = None
     resolved_addresses: List[str] = field(default_factory=list)
     is_missing_https: bool = False
@@ -1611,14 +1610,29 @@ def missing_directives(names: Set[str]) -> List[str]:
     return missing
 
 
+def wildcard_kind(token: str) -> Optional[str]:
+    """Classify the wildcard in a source token.
+
+    "any" is a source that allows every origin, "partial" one that still pins a
+    suffix or a port (`*.example.com`, `wss://*.example.com:*`). The two carry
+    very different risk, so they are worth telling apart. A wildcard in the path
+    (`https://example.com/*`) restricts nothing about the origin and is not a
+    wildcard source at all."""
+    host = token.strip()
+    if host == "*":
+        return "any"
+    for scheme in ("https://", "http://", "wss://", "ws://", "//"):
+        if host.lower().startswith(scheme):
+            host = host[len(scheme) :]
+            break
+    host = host.split("/", 1)[0]
+    if "*" not in host:
+        return None
+    return "any" if host == "*" else "partial"
+
+
 def is_wildcard_token(token: str) -> bool:
-    if token == "*":
-        return True
-    if "://" in token:
-        host = urllib.parse.urlparse(token).netloc
-    else:
-        host = token
-    return "*" in host
+    return wildcard_kind(token) is not None
 
 
 def domain_matches_bypass_domain(csp_source: str, bypass_domain: str) -> bool:
@@ -1827,7 +1841,8 @@ def parse_csp(
 
     has_unsafe_inline = False
     has_unsafe_eval = False
-    has_wildcard = False
+    has_wildcard_any = False
+    has_wildcard_partial = False
     has_data_or_blob = False
     has_report_to = False
     has_report_uri = False
@@ -1875,6 +1890,7 @@ def parse_csp(
             else:
                 norm = item
 
+            wild = wildcard_kind(item)
             if is_host(item):
                 saw_host_source = True
 
@@ -1884,8 +1900,10 @@ def parse_csp(
                 has_unsafe_inline = True
             if norm == "'unsafe-eval'":
                 has_unsafe_eval = True
-            if is_wildcard_token(item) or norm == "*":
-                has_wildcard = True
+            if wild == "any":
+                has_wildcard_any = True
+            elif wild == "partial":
+                has_wildcard_partial = True
             if norm in {"data:", "blob:"}:
                 has_data_or_blob = True
             if norm == "https:" or lower_item.startswith("https://") or lower_item.startswith("wss://"):
@@ -1911,20 +1929,26 @@ def parse_csp(
             # Coloring rules
             if is_bypass_source:
                 color = "bright_red"
-            elif is_wildcard_token(item) or norm in {"*", "data:", "blob:", "'unsafe-inline'", "'unsafe-eval'"}:
-                if is_wildcard_token(item) or norm == "*":
-                    color = "dark_orange"
-                elif norm in {"'unsafe-inline'", "'unsafe-eval'"}:
-                    color = "red"
-                else:
-                    color = "yellow"
+            elif wild:
+                color = "dark_orange"
+            elif norm in {"'unsafe-inline'", "'unsafe-eval'"}:
+                color = "red"
+            elif norm in {"data:", "blob:"}:
+                color = "yellow"
             elif norm in {"'none'", "'self'"}:
                 color = "blue"
             else:
                 color = "white"
 
             policy.items.append(
-                SourceItem(raw=item, normalized=norm, note=note, color=color, is_bypass=is_bypass_source)
+                SourceItem(
+                    raw=item,
+                    normalized=norm,
+                    note=note,
+                    color=color,
+                    is_bypass=is_bypass_source,
+                    wildcard_kind=wild,
+                )
             )
 
         policies.append(policy)
@@ -1935,7 +1959,10 @@ def parse_csp(
         "unknown_directives": sorted(set(unknown_used)),
         "unsafe_inline": has_unsafe_inline,
         "unsafe_eval": has_unsafe_eval,
-        "wildcard_sources": has_wildcard,
+        # Kept as the combined flag the LaTeX all-origins option is built on.
+        "wildcard_sources": has_wildcard_any or has_wildcard_partial,
+        "wildcard_any_origin": has_wildcard_any,
+        "wildcard_partial": has_wildcard_partial,
         "data_or_blob": has_data_or_blob,
         # report-uri is deprecated but still honoured by every current browser,
         # so a policy that has one is not without any reporting at all.
@@ -2542,8 +2569,13 @@ class TextRenderer(BaseRenderer):
                 warn_lines.append("Uses [red]'unsafe-inline'[/red].")
             if res.warnings.get("unsafe_eval"):
                 warn_lines.append("Uses [red]'unsafe-eval'[/red].")
-            if res.warnings.get("wildcard_sources"):
-                warn_lines.append("Uses [dark_orange]wildcard sources (*)[/dark_orange].")
+            if res.warnings.get("wildcard_any_origin"):
+                warn_lines.append("Uses [dark_orange]any-origin wildcards (*)[/dark_orange].")
+            if res.warnings.get("wildcard_partial"):
+                warn_lines.append(
+                    "Uses [dark_orange]partial wildcards[/dark_orange] (e.g. *.example.com), which trust "
+                    "every host under that suffix."
+                )
             if res.warnings.get("data_or_blob"):
                 warn_lines.append("Allows [yellow]data:[/yellow] or [yellow]blob:[/yellow] sources.")
             if res.warnings.get("missing_report_to"):
@@ -2827,6 +2859,7 @@ class JsonRenderer(BaseRenderer):
                         "note": i.note,
                         "color": i.color,
                         "is_bypass": i.is_bypass,
+                        "wildcard_kind": i.wildcard_kind,
                         "is_orphan": i.is_orphan,
                         "orphan_status": i.orphan_status,
                         "is_internal": i.is_internal,

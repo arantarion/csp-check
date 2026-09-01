@@ -2199,6 +2199,8 @@ def parse_csp(
 
 class DomainStatus(str, Enum):
     EXISTS = "exists"
+    # Does not resolve, but WHOIS knows the registration: nobody else can take it.
+    REGISTERED = "registered"
     NXDOMAIN = "nxdomain"
     NOTREGISTERED = "notregistered"
     NOANSWER = "noanswer"
@@ -2207,7 +2209,18 @@ class DomainStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+# Worth reporting: the source cannot be loaded and the entry is dead weight.
 ORPHAN_STATUSES = (DomainStatus.NXDOMAIN, DomainStatus.NOTREGISTERED, DomainStatus.NONS)
+
+# Worth calling claimable: only a WHOIS answer proves nobody holds the domain.
+# An NXDOMAIN or an all-nameservers SERVFAIL is just as consistent with a
+# registered domain whose zone is broken.
+CLAIMABLE_STATUSES = (DomainStatus.NOTREGISTERED,)
+
+
+def is_claimable(status: str) -> bool:
+    return status in {s.value for s in CLAIMABLE_STATUSES}
+
 
 # WHOIS servers are slower and flakier than DNS, and the lookup only runs for
 # domains DNS already found suspicious.
@@ -2312,13 +2325,18 @@ def _resolve_domain_status_sync(
     # zone is broken, and only the former is claimable. WHOIS settles it.
     if status in (DomainStatus.NXDOMAIN, DomainStatus.NONS) and HAVE_WHOIS:
         try:
-            _whois_lookup(domain, timeout=WHOIS_TIMEOUT, quiet=True)
+            record = _whois_lookup(domain, timeout=WHOIS_TIMEOUT, quiet=True)
         except WhoisDomainNotFoundError:
             status = DomainStatus.NOTREGISTERED
         except Exception:
             # Any other WHOIS failure says nothing about the registration, so
-            # the DNS verdict stands.
+            # the DNS verdict stands and the domain is reported as unconfirmed.
             pass
+        else:
+            # A record with no field filled in means the response could not be
+            # parsed, which is not evidence of a registration either way.
+            if record and any(record.get(f) for f in ("domain_name", "creation_date", "registrar")):
+                status = DomainStatus.REGISTERED
 
     return status
 
@@ -2851,11 +2869,20 @@ class TextRenderer(BaseRenderer):
                     f"[bright_red]{len(res.bypass_findings)} known bypassable source(s) — see Bypass Findings below.[/bright_red]"
                 )
             if res.warnings.get("orphan_domains"):
-                warn_lines.append(
-                    f"[magenta bold]Orphaned domain(s) detected![/magenta bold] "
-                    f"[magenta]{len(res.orphan_findings)} allowlisted source(s) point to unregistered/dangling "
-                    f"domains an attacker could claim (likely typos) — see Orphan Domains below.[/magenta]"
-                )
+                claimable = [f for f in res.orphan_findings if is_claimable(f.status)]
+                if claimable:
+                    warn_lines.append(
+                        f"[magenta bold]Claimable domain(s) detected![/magenta bold] "
+                        f"[magenta]{len(claimable)} allowlisted source(s) point to domains that are not "
+                        f"registered, so an attacker could take them (likely typos) — see Orphan Domains "
+                        f"below.[/magenta]"
+                    )
+                if len(claimable) < len(res.orphan_findings):
+                    warn_lines.append(
+                        f"[magenta]{len(res.orphan_findings) - len(claimable)} allowlisted source(s) do not "
+                        f"resolve; whether they are still registered could not be confirmed — see Orphan "
+                        f"Domains below.[/magenta]"
+                    )
 
             if res.warnings.get("internal_hosts"):
                 internal = [f for f in res.host_findings if f.status != HostStatus.UNRESOLVED.value]
@@ -2947,10 +2974,15 @@ class TextRenderer(BaseRenderer):
             if res.orphan_findings:
                 orphan_lines = []
                 for of in res.orphan_findings:
+                    verdict = (
+                        "(not registered, an attacker could claim it)"
+                        if is_claimable(of.status)
+                        else "(does not resolve, registration unconfirmed)"
+                    )
                     orphan_lines.append(
                         f"[bold]{of.directive}[/bold]: [magenta]{of.source_raw}[/magenta] "
                         f"→ registrable domain [yellow]{of.fld}[/yellow] is [magenta]{of.status}[/magenta] "
-                        f"(claimable by an attacker)"
+                        f"{verdict}"
                     )
                 self.console.print(  # type: ignore
                     Panel(
@@ -3080,9 +3112,12 @@ class TextRenderer(BaseRenderer):
                 lines.append("")
 
             if res.orphan_findings:
-                lines.append("--- ORPHAN DOMAINS (claimable by an attacker) ---")
+                lines.append("--- ORPHAN DOMAINS ---")
                 for of in res.orphan_findings:
-                    lines.append(f"  {of.directive}: {of.source_raw} -> registrable domain {of.fld} ({of.status})")
+                    verdict = "claimable" if is_claimable(of.status) else "registration unconfirmed"
+                    lines.append(
+                        f"  {of.directive}: {of.source_raw} -> registrable domain {of.fld} ({of.status}, {verdict})"
+                    )
                 lines.append("")
 
             if res.host_findings:
@@ -3287,7 +3322,8 @@ class LatexRenderer(BaseRenderer):
         ]
         lines.extend(bypass_rows or ["%   (none found)"])
         lines.append("%")
-        lines.append("% Orphaned / dangling domains (unregistered, attacker-claimable; often typos):")
+        lines.append("% Orphaned / dangling domains (often typos). `notregistered` is WHOIS-confirmed")
+        lines.append("% and therefore claimable; the others merely failed to resolve:")
         lines.extend(orphan_rows or ["%   (none found)"])
         lines.append("%")
         lines.append("% Internal / non-public hosts (do not resolve publicly; leak internal naming):")
@@ -3401,7 +3437,8 @@ class LatexRenderer(BaseRenderer):
         catchall = sorted(
             {c for r in results if has_effective_csp(r) for c in r.warnings.get("bypass_via_catchall", [])}
         )
-        orphans = sorted({of.fld for r in results for of in r.orphan_findings})
+        orphans = sorted({of.fld for r in results for of in r.orphan_findings if is_claimable(of.status)})
+        dangling = sorted({of.fld for r in results for of in r.orphan_findings if not is_claimable(of.status)})
         internal_hosts = sorted(
             {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
         )
@@ -3442,20 +3479,37 @@ class LatexRenderer(BaseRenderer):
         )
         de_orphan = Template(
             r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, deren registrierbare Domains ($ORPHAN) "
-            r"zum Zeitpunkt der Untersuchung nicht registriert waren bzw. nicht über das DNS aufgelöst werden "
-            r"konnten. In vielen Fällen handelt es sich dabei um Tippfehler oder um Domains von Diensten, die nicht "
-            r"mehr verwendet werden. Da solche Domains frei registriert werden können, könnte ein Angreifer sie auf "
-            r"sich registrieren und anschließend Inhalte aus einer Quelle ausliefern, "
-            r"der die CSP bereits vertraut. Auf diese Weise ließe sich die Schutzwirkung der CSP aushebeln. Es wird "
-            r"empfohlen, nicht mehr benötigte Einträge zu entfernen sowie Tippfehler zu korrigieren."
+            r"zum Zeitpunkt der Untersuchung nicht registriert waren. In vielen Fällen handelt es sich dabei um "
+            r"Tippfehler oder um Domains von Diensten, die nicht mehr verwendet werden. Da solche Domains frei "
+            r"registriert werden können, könnte ein Angreifer sie auf sich registrieren und anschließend Inhalte "
+            r"aus einer Quelle ausliefern, der die CSP bereits vertraut. Auf diese Weise ließe sich die "
+            r"Schutzwirkung der CSP aushebeln. Es wird empfohlen, nicht mehr benötigte Einträge zu entfernen sowie "
+            r"Tippfehler zu korrigieren."
         )
         en_orphan = Template(
             r"The CSP allowlists hosts whose registrable domains ($ORPHAN) were not registered at the time of the "
-            r"assessment, or could not be resolved via DNS. In many cases these are typos or domains of services "
-            r"that are no longer in use. Because such domains can be registered freely, an attacker could register "
-            r"one and then serve content -- for example scripts -- from a source the CSP already trusts. This would "
-            r"allow the protection provided by the CSP to be undermined. It is recommended to remove entries that "
-            r"are no longer needed and to correct obvious typos."
+            r"assessment. In many cases these are typos or domains of services that are no longer in use. Because "
+            r"such domains can be registered freely, an attacker could register one and then serve content -- for "
+            r"example scripts -- from a source the CSP already trusts. This would allow the protection provided by "
+            r"the CSP to be undermined. It is recommended to remove entries that are no longer needed and to "
+            r"correct obvious typos."
+        )
+        de_dangling = Template(
+            r"In der CSP sind Quellen hinterlegt, die auf registrierbare Domains ($DANGLING) verweisen, welche "
+            r"zum Zeitpunkt der Untersuchung nicht über das DNS aufgelöst werden konnten. Ob diese Domains noch "
+            r"registriert sind, ließ sich nicht abschließend klären. Die betroffenen Einträge haben derzeit keine "
+            r"Wirkung und deuten auf Tippfehler oder auf nicht mehr genutzte Dienste hin. Sollte eine der Domains "
+            r"tatsächlich nicht mehr registriert sein, könnte ein Angreifer sie auf sich registrieren und Inhalte "
+            r"aus einer Quelle ausliefern, der die CSP bereits vertraut. Es wird empfohlen, die betroffenen "
+            r"Einträge zu prüfen und nicht mehr benötigte zu entfernen."
+        )
+        en_dangling = Template(
+            r"The CSP contains sources pointing to registrable domains ($DANGLING) that could not be resolved "
+            r"via DNS at the time of the assessment. Whether they are still registered could not be established. The "
+            r"affected entries have no effect at present and point to typos or to services that are no longer in "
+            r"use. Should one of the domains turn out to be unregistered, an attacker could register it and serve "
+            r"content from a source the CSP already trusts. It is recommended to review the affected entries and "
+            r"to remove the ones that are no longer needed."
         )
         de_internal = Template(
             r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, die über öffentliche DNS-Server nicht "
@@ -3516,6 +3570,10 @@ class LatexRenderer(BaseRenderer):
             sections.append(one_sentence_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
         if orphans:
             sections.append(one_sentence_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
+        if dangling:
+            sections.append(
+                one_sentence_per_line((de_dangling if de else en_dangling).substitute(DANGLING=tt(dangling)))
+            )
         if internal_hosts:
             sections.append(
                 one_sentence_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts)))
@@ -3880,7 +3938,7 @@ def emit_results(results: List[URLResult], *, fmt: str, output: Optional[str], l
     "--check-orphans",
     is_flag=True,
     default=False,
-    help="Resolve allowlisted domains via DNS/WHOIS and flag orphaned (unregistered, attacker-claimable) ones.",
+    help="Resolve allowlisted domains via DNS/WHOIS and flag dangling and attacker-claimable ones.",
 )
 @click.option(
     "--check-hosts",

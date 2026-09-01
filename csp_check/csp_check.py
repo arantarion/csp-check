@@ -27,7 +27,7 @@ from enum import Enum
 from functools import partial
 from html.parser import HTMLParser
 from string import Template
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import httpx
 from rich import box
@@ -175,6 +175,9 @@ KNOWN_DIRECTIVES: Set[str] = {
 # to these three, so leaving one out leaves it unrestricted no matter how strict
 # the rest of the policy is.
 NO_FALLBACK_DIRECTIVES = ("base-uri", "form-action", "frame-ancestors")
+
+# Directives through which an allowed source can end up executing script.
+SCRIPT_CAPABLE_DIRECTIVES = {"default-src", "script-src", "script-src-elem", "child-src", "worker-src"}
 
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {
@@ -1491,7 +1494,7 @@ class URLResult:
     policies: List[Policy] = field(default_factory=list)
     deprecated_used: List[str] = field(default_factory=list)
     unknown_used: List[str] = field(default_factory=list)
-    warnings: Dict[str, object] = field(default_factory=dict)
+    warnings: Dict[str, Any] = field(default_factory=dict)
     bypass_findings: List[BypassFinding] = field(default_factory=list)
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
     host_findings: List[HostFinding] = field(default_factory=list)
@@ -1854,6 +1857,7 @@ def parse_csp(
     has_wildcard_any = False
     has_wildcard_partial = False
     has_data_or_blob = False
+    catchall_script_sources: List[str] = []
     has_report_to = False
     has_report_uri = False
     has_upgrade_insecure = False
@@ -1916,6 +1920,11 @@ def parse_csp(
                 has_wildcard_partial = True
             if norm in {"data:", "blob:"}:
                 has_data_or_blob = True
+            # A source that matches every host permits every known bypass domain
+            # too, but matches none of them literally, so the scan below misses
+            # it entirely.
+            if name in SCRIPT_CAPABLE_DIRECTIVES and (wild == "any" or norm in {"https:", "http:"}):
+                catchall_script_sources.append(f"{name} {item}")
             if norm == "https:" or lower_item.startswith("https://") or lower_item.startswith("wss://"):
                 has_explicit_https_source = True
 
@@ -1982,6 +1991,7 @@ def parse_csp(
             saw_host_source and (not has_explicit_https_source) and (not has_upgrade_insecure)
         ),
         "bypass_domains": bool(bypass_findings),
+        "bypass_via_catchall": catchall_script_sources,
     }
 
     # When the whole policy relies on http-capable host sources without pinning
@@ -2580,10 +2590,10 @@ class TextRenderer(BaseRenderer):
             if res.warnings.get("missing_directives"):
                 warn_lines.append(
                     "[dark_orange]Unrestricted, nothing falls back to them:[/dark_orange] "
-                    + ", ".join(res.warnings["missing_directives"])  # type: ignore
+                    + ", ".join(res.warnings["missing_directives"])
                 )
             if res.warnings.get("deprecated_directives"):
-                warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))  # type: ignore
+                warn_lines.append("Deprecated/legacy directives: " + ", ".join(res.warnings["deprecated_directives"]))
             if res.unknown_used:
                 warn_lines.append(
                     "[red]Unknown directives (ignored by browsers, check for typos):[/red] "
@@ -2618,6 +2628,12 @@ class TextRenderer(BaseRenderer):
             if res.warnings.get("missing_https_and_upgrade"):
                 warn_lines.append(
                     "No explicit [white]https://[/white] sources and missing [white]upgrade-insecure-requests[/white]."
+                )
+            if res.warnings.get("bypass_via_catchall"):
+                warn_lines.append(
+                    f"[bright_red bold]CSP bypass possible![/bright_red bold] [bright_red]"
+                    f"{', '.join(res.warnings['bypass_via_catchall'])} matches any host, so all "
+                    f"{len(BYPASS_DOMAINS)} known bypass domains are permitted.[/bright_red]"
                 )
             if res.warnings.get("bypass_domains"):
                 warn_lines.append(
@@ -2786,7 +2802,7 @@ class TextRenderer(BaseRenderer):
 
             if res.warnings.get("missing_directives"):
                 lines.append(
-                    "Unrestricted, nothing falls back to them: " + ", ".join(res.warnings["missing_directives"])  # type: ignore
+                    "Unrestricted, nothing falls back to them: " + ", ".join(res.warnings["missing_directives"])
                 )
                 lines.append("")
 
@@ -2826,6 +2842,13 @@ class TextRenderer(BaseRenderer):
                     orphan_mark = f" [ORPHAN: {it.orphan_status}]" if it.is_orphan else ""
                     internal_mark = f" [INTERNAL: {it.host_status}]" if it.is_internal else ""
                     lines.append(f"  + {it.raw}{https_mark}{expl}{bypass_mark}{orphan_mark}{internal_mark}")
+                lines.append("")
+
+            if res.warnings.get("bypass_via_catchall"):
+                lines.append(
+                    f"CSP BYPASS: {', '.join(res.warnings['bypass_via_catchall'])} matches any host, "
+                    f"so all {len(BYPASS_DOMAINS)} known bypass domains are permitted."
+                )
                 lines.append("")
 
             if res.bypass_findings:
@@ -2995,6 +3018,8 @@ class LatexRenderer(BaseRenderer):
 
         for res in results:
             prefix = f"{res.requested_url}: " if multi else ""
+            for catchall in res.warnings.get("bypass_via_catchall", []):
+                bypass_rows.append(f"%   {prefix}{catchall} -> matches any host, all known bypass domains apply")
             for bf in res.bypass_findings:
                 risks = ", ".join(bf.risks) if bf.risks else "—"
                 bypass_rows.append(f"%   {prefix}{bf.directive} {bf.source_raw} -> {bf.bypass_domain} (risks: {risks})")
@@ -3052,6 +3077,9 @@ class LatexRenderer(BaseRenderer):
             return ", ".join(rf"\texttt{{{latex_escape(i)}}}" for i in items)
 
         bypasses = sorted({bf.bypass_domain for r in results if has_effective_csp(r) for bf in r.bypass_findings})
+        catchall = sorted(
+            {c for r in results if has_effective_csp(r) for c in r.warnings.get("bypass_via_catchall", [])}
+        )
         orphans = sorted({of.fld for r in results for of in r.orphan_findings})
         internal_hosts = sorted(
             {hf.host for r in results for hf in r.host_findings if hf.status in INTERNAL_HOST_STATUS_VALUES}
@@ -3075,6 +3103,21 @@ class LatexRenderer(BaseRenderer):
             r"CSP. If such a domain is permitted as a script source, an attacker can circumvent the CSP in the "
             r"context of a cross-site scripting attack and execute malicious code. It is recommended to remove the "
             r"affected sources or, if they are strictly required, to restrict them as much as possible."
+        )
+        de_catchall = Template(
+            r"Für Skriptquellen erlaubt die CSP Platzhalter, die jede beliebige Herkunft einschließen "
+            r"($CATCHALL). Damit sind auch sämtliche Domains erlaubt, über die sich die Schutzwirkung einer "
+            r"Content Security Policy nachweislich umgehen lässt, etwa über JSONP-Schnittstellen oder "
+            r"sogenannte \enquote{Script Gadgets}. Eine Einzelaufstellung dieser Domains erübrigt sich, da die "
+            r"Richtlinie an dieser Stelle keine Einschränkung vornimmt. Es wird empfohlen, die Skriptquellen "
+            r"auf die tatsächlich benötigten Hosts zu beschränken."
+        )
+        en_catchall = Template(
+            r"The CSP allows script sources that cover any origin ($CATCHALL). Every domain known to defeat a "
+            r"Content Security Policy, whether through a JSONP interface or a so-called \enquote{script "
+            r"gadget}, is therefore permitted as well. Listing those domains individually serves no purpose, "
+            r"because the policy imposes no restriction at this point. It is recommended to narrow the script "
+            r"sources to the hosts that are actually needed."
         )
         de_orphan = Template(
             r"In der CSP sind Hosts als vertrauenswürdige Quellen hinterlegt, deren registrierbare Domains ($ORPHAN) "
@@ -3151,6 +3194,8 @@ class LatexRenderer(BaseRenderer):
             return re.sub(r"(?<=[.!?]) +(?=[A-ZÄÖÜ])", "\n", text)
 
         sections: List[str] = []
+        if catchall:
+            sections.append(one_per_line((de_catchall if de else en_catchall).substitute(CATCHALL=tt(catchall))))
         if bypasses:
             sections.append(one_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
         if orphans:

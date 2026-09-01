@@ -1566,8 +1566,16 @@ class URLResult:
 # ---------------------------------------
 
 
+_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
+
 def normalize_url(url: str) -> str:
-    return url if url.startswith(("http://", "https://")) else "https://" + url
+    """Default a bare host to https. A URL that already names a scheme is left
+    alone, so `ftp://x` fails with a clear protocol error instead of being
+    silently turned into `https://ftp://x`."""
+    if _SCHEME_RE.match(url):
+        return url
+    return "https:" + url if url.startswith("//") else "https://" + url
 
 
 def normalize_lang(lang: Optional[str]) -> str:
@@ -1620,13 +1628,17 @@ def build_proxy_mounts(proxy_dict: dict, *, verify: bool = True) -> Optional[dic
 
 
 def read_urls_from_file(path: str) -> List[str]:
+    """Read one URL per line, ignoring blanks and comments. Repeats are dropped:
+    fetching the same host twice only duplicates its row in the report."""
     urls: List[str] = []
+    seen: Set[str] = set()
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
-            s = line.strip()
-            if not s or s.startswith("#"):
+            url = line.strip()
+            if not url or url.startswith("#") or url in seen:
                 continue
-            urls.append(s)
+            seen.add(url)
+            urls.append(url)
     return urls
 
 

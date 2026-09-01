@@ -1830,6 +1830,14 @@ _LATEX_SPECIALS = {
 }
 
 
+def one_sentence_per_line(text: str) -> str:
+    """Put every sentence on its own line (LaTeX semantic line breaks). The split
+    happens at a sentence-final '.', '!' or '?' followed by spaces and a capital
+    letter, so abbreviations like "bzw." (lowercase next) and dotted domains stay
+    intact."""
+    return re.sub(r"(?<=[.!?]) +(?=[A-ZÄÖÜ])", "\n", text)
+
+
 def latex_escape(text: str) -> str:
     """Escape the characters that would break a LaTeX run. URLs from the command
     line and host names from a CSP routinely contain ``&``, ``%``, ``#`` and
@@ -3287,6 +3295,63 @@ class LatexRenderer(BaseRenderer):
         lines.append(sep)
         return "\n".join(lines)
 
+    def _report_only_paragraph(self, results: List[URLResult]) -> str:
+        """The `insert-paragraph=` entry explaining that a report-only policy is
+        not enforced.
+
+        The finding still analyses the policy and keeps its rating; the paragraph
+        only records that nothing the policy says is currently blocking
+        anything. Empty when no result is report-only."""
+        described = [r for r in results if has_effective_csp(r)]
+        affected = [r for r in described if r.report_only]
+        if not affected:
+            return ""
+
+        de = self.lang == "de"
+        header = r"\texttt{Content-Security-Policy-Report-Only}"
+
+        if len(affected) < len(described):
+            hosts = ", ".join(rf"\texttt{{{latex_escape(r.requested_url)}}}" for r in affected)
+            lead = (
+                f"Bei den folgenden Anwendungen wird die Content Security Policy ausschließlich über den "
+                f"HTTP-Header {header} ausgeliefert: {hosts}."
+                if de
+                else f"The following applications deliver their Content Security Policy only through the "
+                f"{header} HTTP header: {hosts}."
+            )
+        elif len(affected) > 1:
+            lead = (
+                f"Die Content Security Policies werden ausschließlich über den HTTP-Header {header} ausgeliefert."
+                if de
+                else f"The Content Security Policies are delivered only through the {header} HTTP header."
+            )
+        else:
+            lead = (
+                f"Die Content Security Policy wird ausschließlich über den HTTP-Header {header} ausgeliefert."
+                if de
+                else f"The Content Security Policy is delivered only through the {header} HTTP header."
+            )
+
+        body = (
+            r"In diesem Modus wertet der Browser die Richtlinie zwar aus und meldet Verstöße an den "
+            r"konfigurierten Endpunkt, blockiert die betreffenden Ressourcen jedoch nicht. "
+            r"Die in diesem Abschnitt beschriebenen Schwächen wirken sich deshalb derzeit nicht aus, da die "
+            r"Richtlinie keine Schutzwirkung entfaltet. "
+            r"Der Modus ist dafür vorgesehen, eine Richtlinie vor ihrer Aktivierung zu erproben. "
+            r"Es wird empfohlen, die genannten Schwächen zu beheben und die Richtlinie anschließend über den "
+            r"Header \texttt{Content-Security-Policy} durchzusetzen."
+            if de
+            else r"In this mode the browser evaluates the policy and reports violations to the configured "
+            r"endpoint, but does not block the resources concerned. "
+            r"The weaknesses described in this section therefore have no effect at present, because the "
+            r"policy provides no protection. "
+            r"The mode is meant for trying a policy out before it is switched on. "
+            r"It is recommended to correct the weaknesses listed and then to enforce the policy through the "
+            r"\texttt{Content-Security-Policy} header."
+        )
+
+        return "\n    insert-paragraph=[2,{" + one_sentence_per_line(f"{lead} {body}") + "}],"
+
     def _unreachable_comment(self, results: List[URLResult]) -> str:
         """Name the hosts that never answered. Nothing can be said about the CSP
         of a host that was not reached, so the finding must not claim it has
@@ -3442,27 +3507,24 @@ class LatexRenderer(BaseRenderer):
             r"\texttt{frame-src} and \texttt{worker-src} instead of \texttt{child-src}."
         )
 
-        # Put every sentence on its own line (LaTeX semantic line breaks). The
-        # split happens at a sentence-final '.', '!' or '?' followed by spaces
-        # and a capital letter, so abbreviations like "bzw." (lowercase next)
-        # and dotted domains stay intact.
-        def one_per_line(text: str) -> str:
-            return re.sub(r"(?<=[.!?]) +(?=[A-ZÄÖÜ])", "\n", text)
-
         sections: List[str] = []
         if catchall:
-            sections.append(one_per_line((de_catchall if de else en_catchall).substitute(CATCHALL=tt(catchall))))
+            sections.append(
+                one_sentence_per_line((de_catchall if de else en_catchall).substitute(CATCHALL=tt(catchall)))
+            )
         if bypasses:
-            sections.append(one_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
+            sections.append(one_sentence_per_line((de_bypass if de else en_bypass).substitute(BYPASS=tt(bypasses))))
         if orphans:
-            sections.append(one_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
+            sections.append(one_sentence_per_line((de_orphan if de else en_orphan).substitute(ORPHAN=tt(orphans))))
         if internal_hosts:
-            sections.append(one_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts))))
+            sections.append(
+                one_sentence_per_line((de_internal if de else en_internal).substitute(INTERNAL=tt(internal_hosts)))
+            )
         if unknown:
-            sections.append(one_per_line((de_unknown if de else en_unknown).substitute(UNKNOWN=tt(unknown))))
+            sections.append(one_sentence_per_line((de_unknown if de else en_unknown).substitute(UNKNOWN=tt(unknown))))
         if deprecated:
             sections.append(
-                one_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))
+                one_sentence_per_line((de_deprecated if de else en_deprecated).substitute(DEPRECATED=tt(deprecated)))
             )
 
         return "\n\n".join(sections)
@@ -3591,6 +3653,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
             formatted = pretty_csp(res.csp_raw)
             formatted = highlight_csp_problems(formatted, res)
             problems = "{" + ",".join(self._problems_list(res)) + "}"
+            report_only = self._report_only_paragraph([res])
             block = rf"""
 \begin{{sydeflisting}}{{csplisting}}
 {formatted}
@@ -3601,7 +3664,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
     }},
     einstufung=I,
     csplisting=csplisting,
-    probleme={problems}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report
+    probleme={problems}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report{report_only}
 ]
 {{csp}}
 """.strip()
@@ -3624,6 +3687,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
 
         problems_braced = "{" + ",".join(cumulative) + "}"
 
+        report_only = self._report_only_paragraph(results)
         template_block = rf"""
 \begin{{sydeflisting}}{{csplisting}}
 §R[TODO: Diesen Teil im Bausteintext per lokalem Baustein entfernen!]R§
@@ -3634,7 +3698,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
     }},
     einstufung=I,
     csplisting=csplisting,
-    probleme={problems_braced}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report
+    probleme={problems_braced}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report{report_only}
 ]
 {{csp}}
 """.strip()

@@ -1492,6 +1492,7 @@ class URLResult:
     orphan_findings: List[OrphanFinding] = field(default_factory=list)
     host_findings: List[HostFinding] = field(default_factory=list)
     report_only: bool = False
+    reporting_endpoints_present: Optional[bool] = None
     error: Optional[str] = None
 
 
@@ -1811,6 +1812,7 @@ def parse_csp(
     has_wildcard = False
     has_data_or_blob = False
     has_report_to = False
+    has_report_uri = False
     has_upgrade_insecure = False
     saw_host_source = False
     has_explicit_https_source = False
@@ -1835,6 +1837,8 @@ def parse_csp(
 
         if name == "report-to":
             has_report_to = True
+        if name == "report-uri":
+            has_report_uri = True
         if name == "upgrade-insecure-requests":
             has_upgrade_insecure = True
 
@@ -1914,7 +1918,10 @@ def parse_csp(
         "unsafe_eval": has_unsafe_eval,
         "wildcard_sources": has_wildcard,
         "data_or_blob": has_data_or_blob,
-        "missing_report_to": not has_report_to,
+        # report-uri is deprecated but still honoured by every current browser,
+        # so a policy that has one is not without any reporting at all.
+        "missing_report_to": not (has_report_to or has_report_uri),
+        "legacy_reporting_only": has_report_uri and not has_report_to,
         "missing_https_and_upgrade": (
             saw_host_source and (not has_explicit_https_source) and (not has_upgrade_insecure)
         ),
@@ -2326,6 +2333,16 @@ async def annotate_internal_hosts(
             res.warnings["internal_hosts"] = True
 
 
+def annotate_reporting_endpoint(result: URLResult, headers: httpx.Headers) -> None:
+    """`report-to` names a group that only exists if the response also carries a
+    Reporting-Endpoints header (or the older Report-To). Without one the
+    directive points at nothing and no violation report is ever sent."""
+    present = bool(headers.get("Reporting-Endpoints") or headers.get("Report-To"))
+    result.reporting_endpoints_present = present
+    if not present and any(p.name == "report-to" for p in result.policies):
+        result.warnings["report_to_without_endpoint"] = True
+
+
 def _describe_exc(prefix: str, exc: Optional[BaseException]) -> str:
     """httpx connect/read timeouts stringify to an empty message, which would
     leave the user with a bare "Request failed:"."""
@@ -2399,11 +2416,13 @@ async def fetch_csp(
         if not csp_header and report_only_header:
             result = parse_csp(report_only_header, url, requested_url)
             result.report_only = True
+            annotate_reporting_endpoint(result, resp.headers)
             return result
 
         result = parse_csp(csp_header, url, requested_url)
         if report_only_header:
             result.warnings["has_report_only_too"] = True
+        annotate_reporting_endpoint(result, resp.headers)
         return result
 
     except Exception as e:
@@ -2504,7 +2523,18 @@ class TextRenderer(BaseRenderer):
             if res.warnings.get("data_or_blob"):
                 warn_lines.append("Allows [yellow]data:[/yellow] or [yellow]blob:[/yellow] sources.")
             if res.warnings.get("missing_report_to"):
-                warn_lines.append("Missing [white]report-to[/white] directive.")
+                warn_lines.append(
+                    "No violation reporting configured ([white]report-to[/white]/[white]report-uri[/white])."
+                )
+            if res.warnings.get("legacy_reporting_only"):
+                warn_lines.append(
+                    "Reporting uses the deprecated [yellow]report-uri[/yellow] only; add [white]report-to[/white]."
+                )
+            if res.warnings.get("report_to_without_endpoint"):
+                warn_lines.append(
+                    "[yellow]report-to[/yellow] names a group, but the response has no "
+                    "[white]Reporting-Endpoints[/white] header, so no report is ever sent."
+                )
             if res.warnings.get("missing_https_and_upgrade"):
                 warn_lines.append(
                     "No explicit [white]https://[/white] sources and missing [white]upgrade-insecure-requests[/white]."
@@ -2661,6 +2691,12 @@ class TextRenderer(BaseRenderer):
             if res.warnings.get("has_report_only_too"):
                 lines.append("NOTE: A Content-Security-Policy-Report-Only header is also present.")
                 lines.append("")
+            if res.warnings.get("report_to_without_endpoint"):
+                lines.append(
+                    "NOTE: report-to names a group, but the response has no Reporting-Endpoints "
+                    "header, so no report is ever sent."
+                )
+                lines.append("")
 
             if res.deprecated_used:
                 lines.append("Deprecated/legacy directives present: " + ", ".join(res.deprecated_used))
@@ -2807,6 +2843,7 @@ class JsonRenderer(BaseRenderer):
                 "deprecated_used": r.deprecated_used,
                 "unknown_used": r.unknown_used,
                 "report_only": r.report_only,
+                "reporting_endpoints_present": r.reporting_endpoints_present,
                 "error": r.error,
                 "warnings": {k: v for k, v in r.warnings.items()},
                 "bypass_findings": [bypass_to_dict(bf) for bf in r.bypass_findings],
@@ -2843,7 +2880,7 @@ class LatexRenderer(BaseRenderer):
         if res.warnings.get("data_or_blob"):
             problems.append("data")
 
-        if res.warnings.get("missing_report_to"):
+        if res.warnings.get("missing_report_to") or res.warnings.get("report_to_without_endpoint"):
             problems.append("no-report")
 
         if res.warnings.get("missing_https_and_upgrade"):

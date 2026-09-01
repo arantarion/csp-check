@@ -179,6 +179,45 @@ NO_FALLBACK_DIRECTIVES = ("base-uri", "form-action", "frame-ancestors")
 # Directives through which an allowed source can end up executing script.
 SCRIPT_CAPABLE_DIRECTIVES = {"default-src", "script-src", "script-src-elem", "child-src", "worker-src"}
 
+# Directives that fall back to default-src when absent.
+FETCH_DIRECTIVES = {
+    "child-src",
+    "connect-src",
+    "default-src",
+    "fenced-frame-src",
+    "font-src",
+    "frame-src",
+    "img-src",
+    "manifest-src",
+    "media-src",
+    "object-src",
+    "prefetch-src",
+    "script-src",
+    "script-src-attr",
+    "script-src-elem",
+    "style-src",
+    "style-src-attr",
+    "style-src-elem",
+    "worker-src",
+}
+
+NONCE_AND_HASH_SOURCES = {"'nonce-'", "'sha256-'", "'sha384-'", "'sha512-'"}
+
+# Keyword sources that allow no origin by themselves, so another policy cannot
+# take anything away from them.
+NON_GRANTING_KEYWORDS = {"'none'", "'strict-dynamic'", "'report-sample'"}
+
+# Directives that fall back to a more general directive before default-src,
+# most specific first.
+FALLBACK_CHAIN: Dict[str, tuple] = {
+    "script-src-elem": ("script-src", "default-src"),
+    "script-src-attr": ("script-src", "default-src"),
+    "style-src-elem": ("style-src", "default-src"),
+    "style-src-attr": ("style-src", "default-src"),
+    "frame-src": ("child-src", "default-src"),
+    "worker-src": ("child-src", "default-src"),
+}
+
 BYPASS_DOMAINS: Dict[str, Dict] = {
     "7b936.v.fwmrm.net": {
         "risks": ["exec"],
@@ -1444,6 +1483,7 @@ class SourceItem:
     is_orphan: bool = False
     orphan_status: Optional[str] = None
     is_internal: bool = False
+    is_ineffective: bool = False
     wildcard_kind: Optional[str] = None
     host_status: Optional[str] = None
     resolved_addresses: List[str] = field(default_factory=list)
@@ -1901,12 +1941,83 @@ def _parse_policies(policy_sets: List[List[str]]) -> List[Policy]:
     return policies
 
 
+def _governing_items(policy_map: Dict[str, List[SourceItem]], name: str) -> Optional[List[SourceItem]]:
+    """The sources one policy applies to `name`, or None when that policy places
+    no restriction on it at all."""
+    chain = (name, *FALLBACK_CHAIN.get(name, ()))
+    if name in FETCH_DIRECTIVES:
+        chain += ("default-src",)
+    for candidate in chain:
+        if candidate in policy_map:
+            return policy_map[candidate]
+    return None
+
+
+def _permits(items: List[SourceItem], item: SourceItem) -> bool:
+    """Does this source list allow what `item` allows?
+
+    Exact for keyword and scheme sources. For host sources it errs towards yes,
+    because keeping a finding that needs a second look beats dropping a real
+    one."""
+    normalized = {i.normalized for i in items}
+    if item.raw.lower() in {i.raw.lower() for i in items}:
+        return True
+
+    # An inline script carrying a nonce or hash is allowed just as well by a
+    # policy that allows every inline script.
+    if item.normalized in NONCE_AND_HASH_SOURCES:
+        return "'unsafe-inline'" in normalized
+
+    # Capability keywords have to be granted by name in every policy. 'self' is
+    # the exception: it resolves to the document's own origin, so a scheme-wide
+    # source covers it like any other host.
+    if item.normalized.startswith("'") and item.normalized != "'self'":
+        return item.normalized in normalized
+
+    # `*` and the scheme sources match hosts of any origin, but not data: or
+    # blob:, which have to be named explicitly.
+    if item.normalized in {"data:", "blob:", "filesystem:"}:
+        return False
+    if normalized & {"*", "https:", "http:"}:
+        return True
+
+    host = extract_host_from_source(item.raw)
+    if not host:
+        return False
+    return any(source_permits_host(i.raw, host) for i in items)
+
+
+def mark_ineffective_sources(policies: List[Policy]) -> None:
+    """Flag every source another policy in the same header blocks.
+
+    A header can carry several policies, and a browser enforces all of them, so
+    only what every policy permits has any effect. A policy that does not
+    mention a resource type at all restricts nothing about it."""
+    by_index: Dict[int, Dict[str, List[SourceItem]]] = {}
+    for policy in policies:
+        by_index.setdefault(policy.policy_index, {})[policy.name] = policy.items
+    if len(by_index) < 2:
+        return
+
+    for policy in policies:
+        others = [m for index, m in by_index.items() if index != policy.policy_index]
+        for item in policy.items:
+            # These grant no origin of their own, so no other policy can take
+            # anything away from them.
+            if item.normalized in NON_GRANTING_KEYWORDS:
+                continue
+            governing = (_governing_items(other, policy.name) for other in others)
+            item.is_ineffective = any(g is not None and not _permits(g, item) for g in governing)
+
+
 def _scan_bypasses(policies: List[Policy]) -> List[BypassFinding]:
     """Mark every source that names a domain known to defeat a CSP."""
     findings: List[BypassFinding] = []
     seen: Set[tuple] = set()
     for policy in policies:
         for item in policy.items:
+            if item.is_ineffective:
+                continue
             for bypass_domain, meta in BYPASS_DOMAINS.items():
                 if not source_permits_host(item.normalized, bypass_domain):
                     continue
@@ -1943,6 +2054,8 @@ def _analyse_policies(policies: List[Policy]) -> Dict[str, Any]:
 
     for policy in policies:
         for item in policy.items:
+            if item.is_ineffective:
+                continue
             lower_raw = item.raw.lower()
             if is_host(item.raw):
                 saw_host_source = True
@@ -1999,6 +2112,7 @@ def parse_csp(
 
     policies = _parse_policies(split_policies(csp_header))
     applied = [p for p in policies if not p.is_ignored_duplicate]
+    mark_ineffective_sources(applied)
 
     warnings_dict = _analyse_policies(applied)
     bypass_findings = _scan_bypasses(applied)
@@ -2006,6 +2120,9 @@ def parse_csp(
     duplicates = sorted({p.name for p in policies if p.is_ignored_duplicate})
     if duplicates:
         warnings_dict["duplicate_directives"] = duplicates
+    policy_count = len({p.policy_index for p in policies})
+    if policy_count > 1:
+        warnings_dict["multiple_policies"] = policy_count
 
     # When the policy relies on http-capable host sources without pinning https
     # (and without upgrade-insecure-requests), flag each affected plain host so
@@ -2013,7 +2130,7 @@ def parse_csp(
     if warnings_dict["missing_https_and_upgrade"]:
         for policy in applied:
             for item in policy.items:
-                if is_host(item.raw) and not item.wildcard_kind:
+                if not item.is_ineffective and is_host(item.raw) and not item.wildcard_kind:
                     item.is_missing_https = True
 
     return URLResult(
@@ -2600,6 +2717,11 @@ class TextRenderer(BaseRenderer):
                 )
             if res.warnings.get("has_report_only_too"):
                 warn_lines.append("A [yellow]Content-Security-Policy-Report-Only[/yellow] header is also present.")
+            if res.warnings.get("multiple_policies"):
+                warn_lines.append(
+                    f"Header carries [yellow]{res.warnings['multiple_policies']} policies[/yellow]. A browser "
+                    f"enforces all of them, so only what every policy permits has any effect."
+                )
             if res.warnings.get("duplicate_directives"):
                 warn_lines.append(
                     "[yellow]Repeated directives, only the first of each applies:[/yellow] "
@@ -2715,6 +2837,7 @@ class TextRenderer(BaseRenderer):
                     bypass_mark = " [bright_red bold][BYPASS][/bright_red bold]" if it.is_bypass else ""
                     orphan_mark = f" [magenta bold][ORPHAN: {it.orphan_status}][/magenta bold]" if it.is_orphan else ""
                     internal_mark = f" [cyan bold][INTERNAL: {it.host_status}][/cyan bold]" if it.is_internal else ""
+                    dead_mark = " [dim](no effect: blocked by another policy)[/dim]" if it.is_ineffective else ""
                     if it.is_orphan and not it.is_bypass:
                         item_color = "magenta"
                     elif it.is_internal and not it.is_bypass:
@@ -2722,7 +2845,7 @@ class TextRenderer(BaseRenderer):
                     else:
                         item_color = it.color
                     value = (
-                        f"[{item_color}]{it.raw}[/{item_color}]{https_mark}{expl}"
+                        f"[{item_color}]{it.raw}[/{item_color}]{https_mark}{dead_mark}{expl}"
                         f"{bypass_mark}{orphan_mark}{internal_mark}"
                     )
                     table.add_row(directive_label if first else "", value)
@@ -2863,7 +2986,8 @@ class TextRenderer(BaseRenderer):
                     bypass_mark = " [BYPASS]" if it.is_bypass else ""
                     orphan_mark = f" [ORPHAN: {it.orphan_status}]" if it.is_orphan else ""
                     internal_mark = f" [INTERNAL: {it.host_status}]" if it.is_internal else ""
-                    lines.append(f"  + {it.raw}{https_mark}{expl}{bypass_mark}{orphan_mark}{internal_mark}")
+                    dead_mark = " (no effect: blocked by another policy)" if it.is_ineffective else ""
+                    lines.append(f"  + {it.raw}{https_mark}{dead_mark}{expl}{bypass_mark}{orphan_mark}{internal_mark}")
                 lines.append("")
 
             if res.warnings.get("bypass_via_catchall"):
@@ -2936,6 +3060,7 @@ class JsonRenderer(BaseRenderer):
                         "note": i.note,
                         "color": i.color,
                         "is_bypass": i.is_bypass,
+                        "is_ineffective": i.is_ineffective,
                         "wildcard_kind": i.wildcard_kind,
                         "is_orphan": i.is_orphan,
                         "orphan_status": i.orphan_status,

@@ -62,6 +62,8 @@ Options:
                                   (de|en|german|english).  [default: de]
   --proxy TEXT                    Comma-separated list of proxy URLs, e.g.
                                   'http://127.0.0.1:8080,https://proxy2:443'.
+  -A, --user-agent TEXT           User-Agent to send. Some sites vary the
+                                  policy by client.
   --insecure                      Disable SSL certificate verification.
   -r, --redirect                  Allows redirects.
   -t, --threads INTEGER RANGE     Max concurrent requests when fetching

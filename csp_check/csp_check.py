@@ -1478,7 +1478,7 @@ def _index_bypass_domains() -> Dict[str, List[str]]:
 BYPASS_DOMAINS_BY_SUFFIX: Dict[str, List[str]] = _index_bypass_domains()
 
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
 
 console = Console()
 
@@ -2583,6 +2583,7 @@ async def fetch_csp(
     timeout_s: float = 15.0,
     max_retries: int = 2,
     backoff_base: float = 0.5,
+    user_agent: str = DEFAULT_USER_AGENT,
 ) -> URLResult:
     requested_url = url
     url = normalize_url(url)
@@ -2591,7 +2592,7 @@ async def fetch_csp(
     if client is None:
         mounts = build_proxy_mounts(proxies or {}, verify=is_secure)
         client_kwargs: dict = dict(
-            headers={"User-Agent": USER_AGENT, **(headers or {})},
+            headers={"User-Agent": user_agent, **(headers or {})},
             cookies=cookies or {},
             verify=is_secure,
             follow_redirects=redirect,
@@ -2684,11 +2685,12 @@ async def fetch_multiple_csps(
     concurrency: int = 20,
     timeout_s: float = 15.0,
     max_retries: int = 2,
+    user_agent: str = DEFAULT_USER_AGENT,
 ) -> List[URLResult]:
     sem = asyncio.Semaphore(concurrency)
     mounts = build_proxy_mounts(proxies or {}, verify=is_secure)
     client_kwargs: dict = dict(
-        headers={"User-Agent": USER_AGENT, **(headers or {})},
+        headers={"User-Agent": user_agent, **(headers or {})},
         cookies=cookies or {},
         verify=is_secure,
         follow_redirects=redirect,
@@ -3759,6 +3761,12 @@ def emit_results(results: List[URLResult], *, fmt: str, output: Optional[str], l
 @click.option(
     "--proxy", default=None, help="Comma-separated list of proxy URLs, e.g. 'http://127.0.0.1:8080,https://proxy2:443'."
 )
+@click.option(
+    "-A",
+    "--user-agent",
+    default=DEFAULT_USER_AGENT,
+    help="User-Agent to send. Some sites vary the policy by client.",
+)
 @click.option("--insecure", is_flag=True, default=False, help="Disable SSL certificate verification.")
 @click.option("-r", "--redirect", is_flag=True, default=False, help="Allows redirects.")
 @click.option(
@@ -3818,6 +3826,7 @@ def main(
     fmt,
     lang,
     proxy,
+    user_agent,
     insecure,
     redirect,
     threads,
@@ -3894,6 +3903,7 @@ def main(
             concurrency=threads,
             timeout_s=timeout,
             max_retries=retries,
+            user_agent=user_agent,
         )
     )
 

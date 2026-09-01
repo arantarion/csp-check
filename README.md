@@ -129,18 +129,19 @@ never registered — is a real risk: an attacker can register it and serve scrip
 styles or frames from a source the policy already trusts, sidestepping the CSP.
 These entries are frequently typos (e.g. `gogle-analytics.com`).
 
-Pass `--check-orphans` to perform live DNS (and, if `python-whois` is installed,
-WHOIS) lookups on every registrable domain referenced across all checked CSPs.
+Pass `--check-orphans` to perform live DNS and WHOIS lookups on every registrable
+domain referenced across all checked CSPs. DNS alone cannot tell an unregistered
+domain from a registered one whose zone is broken, and only the first is claimable,
+so a domain that does not resolve is confirmed against WHOIS before it is reported
+as `notregistered`.
 Each registrable domain is resolved once and de-duplicated across URLs.
 Orphaned sources are highlighted in the text output (`[ORPHAN: <status>]`),
 included in the JSON output (`orphan_findings` and per-item `is_orphan`), and —
 for LaTeX output — summarized together with the known bypass domains in a
 `%`-prefixed comment block appended under the generated finding.
 
-> **Note:** `--check-orphans` makes outbound DNS/WHOIS requests and is therefore
-> opt-in. It does nothing in `--csp` mode unless the flag is given. The WHOIS step
-> only runs if the optional `python-whois` package is installed; it is not a
-> declared dependency, so by default the classification is DNS-only.
+> **Note:** `--check-orphans` makes outbound DNS and WHOIS requests and is therefore
+> opt-in. It does nothing in `--csp` mode unless the flag is given.
 
 ---
 

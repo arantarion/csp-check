@@ -7,6 +7,7 @@
 #     "tldextract",
 #     "httpx",
 #     "dnspython",
+#     "python-whois",
 # ]
 # ///
 
@@ -45,7 +46,7 @@ except Exception:
 
 try:
     from whois import whois as _whois_lookup  # type: ignore[import-not-found]
-    from whois.parser import PywhoisError  # type: ignore[import-not-found]
+    from whois.exceptions import WhoisDomainNotFoundError  # type: ignore[import-not-found]
 
     HAVE_WHOIS = True
 except Exception:
@@ -2200,6 +2201,10 @@ class DomainStatus(str, Enum):
 
 ORPHAN_STATUSES = (DomainStatus.NXDOMAIN, DomainStatus.NOTREGISTERED, DomainStatus.NONS)
 
+# WHOIS servers are slower and flakier than DNS, and the lookup only runs for
+# domains DNS already found suspicious.
+WHOIS_TIMEOUT = 10
+
 _HOST_QUOTE_RE = re.compile(r"^'+|'+$")
 
 
@@ -2295,12 +2300,16 @@ def _resolve_domain_status_sync(
 
     status = _lookup()
 
+    # DNS alone cannot tell an unregistered domain from a registered one whose
+    # zone is broken, and only the former is claimable. WHOIS settles it.
     if status in (DomainStatus.NXDOMAIN, DomainStatus.NONS) and HAVE_WHOIS:
         try:
-            _whois_lookup(domain)
-        except PywhoisError:
+            _whois_lookup(domain, timeout=WHOIS_TIMEOUT, quiet=True)
+        except WhoisDomainNotFoundError:
             status = DomainStatus.NOTREGISTERED
         except Exception:
+            # Any other WHOIS failure says nothing about the registration, so
+            # the DNS verdict stands.
             pass
 
     return status

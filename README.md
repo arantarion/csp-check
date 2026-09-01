@@ -14,16 +14,13 @@ Requires **Python 3.12+**
 
 ```bash
 pipx install .
-# or
-pipx install git@github.com:arantarion/csp-check.git
 ```
 
 ### Using uv
 
 ```bash
 uv tool install .
-# or
-uv tool install https://github.com/arantarion/csp-check.git
+
 # or directly call the script
 uv run csp_check/csp_check.py
 ```
@@ -190,8 +187,3 @@ _CSP_CHECK_COMPLETE=fish_source csp-check | source
 
 After adding the line, restart your shell or source the config file for the changes to take effect.
 
----
-
-## Example Output
-
-![example output of the tool](img/example.png "Example Output")

@@ -3662,7 +3662,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
     findingattribute={{%
         %prefix={{}},
     }},
-    einstufung=I,
+    einstufung=L,
     csplisting=csplisting,
     probleme={problems}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report{report_only}
 ]
@@ -3696,7 +3696,7 @@ During development, the online tool \enquote{CSP Evaluator}\footnote{CSP Evaluat
     findingattribute={{%
         %prefix={{}},
     }},
-    einstufung=I,
+    einstufung=L,
     csplisting=csplisting,
     probleme={problems_braced}, % Options: missing-directive,unsafe,no-https,all-origins,data,bypass,no-report{report_only}
 ]
